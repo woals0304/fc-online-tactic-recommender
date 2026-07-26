@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { analyzePlayStyle } from "../analysis/playStyleAnalyzer";
+import { buildTacticApplicationGuideSet } from "../tactics/tacticApplicationGuide";
 import { recommendTactic } from "../tactics/tacticRecommender";
 import basicUserFixture from "./__fixtures__/success/basic-user.json";
 import matchDetailsFixture from "./__fixtures__/success/match-details.json";
@@ -121,6 +122,75 @@ describe("isSearchResultWithAnalysis", () => {
 
     expect(isSearchResultWithAnalysis(legacy)).toBe(true);
   });
+
+  it("추천 전술과 일치하는 카드 적용 가이드를 승인한다", () => {
+    const result = createValidResultWithSquad();
+
+    expect(result.tacticApplicationGuides).toBeDefined();
+    expect(isSearchResultWithAnalysis(result)).toBe(true);
+  });
+
+  it("추천 configHash와 다른 적용 가이드를 거부한다", () => {
+    const damaged = structuredClone(createValidResultWithSquad());
+    damaged.tacticApplicationGuides!.primary.recommendationConfigHash =
+      damaged.recommendation.alternative.metadata.configHash;
+
+    expect(isSearchResultWithAnalysis(damaged)).toBe(false);
+  });
+
+  it("개인 전술 슬롯 순서가 추천과 다른 적용 가이드를 거부한다", () => {
+    const damaged = structuredClone(createValidResultWithSquad());
+    damaged.tacticApplicationGuides!.primary.assignments[0].instructionIndex += 1;
+
+    expect(isSearchResultWithAnalysis(damaged)).toBe(false);
+  });
+
+  it("같은 카드를 두 개인 전술 슬롯에 중복 배치한 가이드를 거부한다", () => {
+    const damaged = structuredClone(createValidResultWithSquad());
+    const guide = damaged.tacticApplicationGuides!.primary;
+    const assigned = guide.assignments.find((assignment) => assignment.card !== null);
+    const unassigned = guide.assignments.find((assignment) => assignment.card === null);
+
+    expect(assigned).toBeDefined();
+    expect(unassigned).toBeDefined();
+
+    unassigned!.card = assigned!.card;
+    unassigned!.observedPosition = unassigned!.position;
+    unassigned!.observedPositionCode = assigned!.observedPositionCode;
+    unassigned!.matchKind = "exact-recent-position";
+    guide.assignedSlots += 1;
+
+    expect(isSearchResultWithAnalysis(damaged)).toBe(false);
+  });
+
+  it("기준 경기 카드의 원본 포지션 코드와 다른 적용 가이드를 거부한다", () => {
+    const damaged = structuredClone(createValidResultWithSquad());
+    const assignment = damaged.tacticApplicationGuides!.primary.assignments.find(
+      (candidate) => candidate.card !== null,
+    );
+
+    expect(assignment).toBeDefined();
+    assignment!.observedPositionCode = 999;
+
+    expect(isSearchResultWithAnalysis(damaged)).toBe(false);
+  });
+
+  it("실제 경기 목록에 없는 기준 경기 ID를 거부한다", () => {
+    const damaged = structuredClone(createValidResultWithSquad());
+    damaged.tacticApplicationGuides!.primary.referenceMatchId = "missing-match";
+
+    expect(isSearchResultWithAnalysis(damaged)).toBe(false);
+  });
+
+  it("주전술과 대안이 서로 다른 기준 경기를 가리키면 거부한다", () => {
+    const damaged = structuredClone(createValidResultWithSquad());
+    const secondMatch = damaged.matches[1];
+    secondMatch.players = structuredClone(damaged.matches[0].players);
+    damaged.tacticApplicationGuides!.alternative.referenceMatchId = secondMatch.matchId;
+    damaged.tacticApplicationGuides!.alternative.referencePlayedAt = secondMatch.playedAt;
+
+    expect(isSearchResultWithAnalysis(damaged)).toBe(false);
+  });
 });
 
 function createValidResult(): SearchResultWithAnalysis {
@@ -156,7 +226,7 @@ function createValidResultWithSquad(): SearchResultWithAnalysis {
       },
     },
   ];
-  result.squadProfile = buildRecentSquadProfile(result.matches, result.matches.length, {
+  const metadata = {
     status: "available",
     fetchedAt: "2026-07-26T00:00:00.000Z",
     getPlayerName: () => "합성 선수",
@@ -165,7 +235,17 @@ function createValidResultWithSquad(): SearchResultWithAnalysis {
       imageUrl: "https://ssl.nexon.com/season.png",
     }),
     getPositionName: () => "ST",
-  });
+  } as const;
+  result.squadProfile = buildRecentSquadProfile(
+    result.matches,
+    result.matches.length,
+    metadata,
+  );
+  result.tacticApplicationGuides = buildTacticApplicationGuideSet(
+    result.recommendation,
+    result.matches,
+    metadata,
+  );
 
   return result;
 }

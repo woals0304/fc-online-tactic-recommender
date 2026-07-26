@@ -18,6 +18,7 @@ import type {
   ApiErrorType,
   FcOnlineMatchDetailResponse,
 } from "../../../lib/fconline/types";
+import { buildTacticApplicationGuideSet } from "../../../lib/tactics/tacticApplicationGuide";
 import { recommendTactic } from "../../../lib/tactics/tacticRecommender";
 
 const MAX_LIMIT = 10;
@@ -311,13 +312,20 @@ async function fetchSearchPayload(nickname: string, limit: number, apiKey: strin
     matchIds.length,
     squadMetadata,
   );
+  const recommendation = recommendTactic(analysis);
+  const tacticApplicationGuides = buildTacticApplicationGuideSet(
+    recommendation,
+    result.matches,
+    squadMetadata,
+  );
 
   return {
     payload: {
       ...result,
       squadProfile,
       analysis,
-      recommendation: recommendTactic(analysis),
+      recommendation,
+      tacticApplicationGuides,
     },
     cacheable:
       detailResult.complete &&

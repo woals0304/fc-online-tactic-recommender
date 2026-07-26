@@ -1,14 +1,24 @@
 import type {
   AnalysisConfidence,
   NormalizedMatch,
+  PlayerPosition,
   PlayStyleAnalysis,
   PlayStyleLabel,
   RecentSquadCard,
   RecentSquadProfile,
   SearchResult,
   SearchResultWithAnalysis,
+  TacticApplicationGuide,
+  TacticApplicationGuideSet,
+  TacticInstructionAssignment,
+  TacticRecommendation,
+  TacticRecommendationSet,
 } from "./types";
-import { isTacticRecommendationSet } from "../tactics/tacticSchema";
+import { getPositionAssignmentMatchKind } from "../tactics/tacticApplicationGuide";
+import {
+  isTacticRecommendationSet,
+  PLAYER_POSITIONS,
+} from "../tactics/tacticSchema";
 
 type CompatibleSearchSummary = Omit<SearchResult["summary"], "unknown"> & {
   unknown?: number;
@@ -46,7 +56,13 @@ export function isSearchResultWithAnalysis(
     !isPlayStyleAnalysis(value.analysis) ||
     !isTacticRecommendationSet(value.recommendation) ||
     (value.squadProfile !== undefined &&
-      !isRecentSquadProfile(value.squadProfile, value.matches))
+      !isRecentSquadProfile(value.squadProfile, value.matches)) ||
+    (value.tacticApplicationGuides !== undefined &&
+      !isTacticApplicationGuideSet(
+        value.tacticApplicationGuides,
+        value.recommendation,
+        value.matches,
+      ))
   ) {
     return false;
   }
@@ -55,6 +71,168 @@ export function isSearchResultWithAnalysis(
     value.analysis.matchCount === value.matches.length &&
     isSummary(value.summary, value.matches)
   );
+}
+
+function isTacticApplicationGuideSet(
+  value: unknown,
+  recommendation: TacticRecommendationSet,
+  matches: NormalizedMatch[],
+): value is TacticApplicationGuideSet {
+  if (
+    !isRecord(value) ||
+    !isTacticApplicationGuide(value.primary, recommendation.primary, matches) ||
+    !isTacticApplicationGuide(value.alternative, recommendation.alternative, matches)
+  ) {
+    return false;
+  }
+
+  return (
+    value.primary.referenceMatchId === value.alternative.referenceMatchId &&
+    value.primary.referencePlayedAt === value.alternative.referencePlayedAt
+  );
+}
+
+function isTacticApplicationGuide(
+  value: unknown,
+  recommendation: TacticRecommendation,
+  matches: NormalizedMatch[],
+): value is TacticApplicationGuide {
+  if (
+    !isRecord(value) ||
+    value.recommendationConfigHash !== recommendation.metadata.configHash ||
+    value.templateId !== recommendation.metadata.templateId ||
+    !isStringOrNull(value.referenceMatchId) ||
+    !isStringOrNull(value.referencePlayedAt) ||
+    !isNonNegativeInteger(value.assignedSlots) ||
+    !isNonNegativeInteger(value.totalSlots) ||
+    !isRecord(value.validation) ||
+    value.validation.formation !== "unconfirmed" ||
+    value.validation.personalTactics !== "unconfirmed" ||
+    !Array.isArray(value.assignments)
+  ) {
+    return false;
+  }
+
+  const expectedSlots = recommendation.playerInstructions.flatMap(
+    (instruction, instructionIndex) =>
+      instruction.positions.map((position) => ({ instructionIndex, position })),
+  );
+
+  if (
+    value.totalSlots !== expectedSlots.length ||
+    value.assignments.length !== expectedSlots.length ||
+    value.assignedSlots > value.totalSlots
+  ) {
+    return false;
+  }
+
+  const referenceMatch =
+    value.referenceMatchId === null
+      ? null
+      : matches.find((match) => match.matchId === value.referenceMatchId) ?? null;
+
+  if (
+    (value.referenceMatchId === null && value.referencePlayedAt !== null) ||
+    (value.referenceMatchId !== null && referenceMatch === null) ||
+    (referenceMatch !== null && referenceMatch.playedAt !== value.referencePlayedAt)
+  ) {
+    return false;
+  }
+
+  const assignedCardKeys = new Set<string>();
+  let actualAssignedSlots = 0;
+
+  for (let index = 0; index < value.assignments.length; index += 1) {
+    const assignment = value.assignments[index];
+    const expectedSlot = expectedSlots[index];
+
+    if (
+      !isTacticInstructionAssignment(
+        assignment,
+        expectedSlot.instructionIndex,
+        expectedSlot.position,
+        referenceMatch,
+      )
+    ) {
+      return false;
+    }
+
+    if (assignment.card !== null) {
+      actualAssignedSlots += 1;
+      const cardKey = `${assignment.card.spId}:${assignment.card.spGrade ?? "unknown"}`;
+
+      if (assignedCardKeys.has(cardKey)) {
+        return false;
+      }
+
+      assignedCardKeys.add(cardKey);
+    }
+  }
+
+  return actualAssignedSlots === value.assignedSlots;
+}
+
+function isTacticInstructionAssignment(
+  value: unknown,
+  expectedInstructionIndex: number,
+  expectedPosition: PlayerPosition,
+  referenceMatch: NormalizedMatch | null,
+): value is TacticInstructionAssignment {
+  if (
+    !isRecord(value) ||
+    value.instructionIndex !== expectedInstructionIndex ||
+    value.position !== expectedPosition ||
+    !isEnumValue(value.matchKind, [
+      "exact-recent-position",
+      "compatible-position",
+      "unassigned",
+    ] as const) ||
+    !(value.observedPosition === null || isPlayerPosition(value.observedPosition)) ||
+    !(value.observedPositionCode === null || isNonNegativeInteger(value.observedPositionCode))
+  ) {
+    return false;
+  }
+
+  if (value.matchKind === "unassigned") {
+    return (
+      value.card === null &&
+      value.observedPosition === null &&
+      value.observedPositionCode === null
+    );
+  }
+
+  if (
+    !isRecord(value.card) ||
+    !isPositiveSafeInteger(value.card.spId) ||
+    !(value.card.spGrade === null || isIntegerInRange(value.card.spGrade, 1, 13)) ||
+    !isPlayerPosition(value.observedPosition) ||
+    !isNonNegativeInteger(value.observedPositionCode) ||
+    referenceMatch === null ||
+    getPositionAssignmentMatchKind(value.observedPosition, expectedPosition) !== value.matchKind
+  ) {
+    return false;
+  }
+
+  const card = value.card;
+  const observedPositionCode = value.observedPositionCode;
+  const referencePlayers = (referenceMatch as unknown as { players?: unknown }).players;
+
+  // The browser parser cannot refetch the official code-to-name metadata. It can still bind
+  // the declared position to the exact raw player row that the server used for this guide.
+  return (
+    Array.isArray(referencePlayers) &&
+    referencePlayers.some(
+      (player) =>
+        isRecord(player) &&
+        player.spId === card.spId &&
+        player.spGrade === card.spGrade &&
+        player.spPosition === observedPositionCode,
+    )
+  );
+}
+
+function isPlayerPosition(value: unknown): value is PlayerPosition {
+  return typeof value === "string" && PLAYER_POSITIONS.includes(value as PlayerPosition);
 }
 
 function isUser(value: unknown) {

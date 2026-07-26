@@ -282,6 +282,42 @@ export type TacticRecommendationSet = {
   alternative: TacticRecommendation;
 };
 
+export type TacticAssignmentMatchKind =
+  | "exact-recent-position"
+  | "compatible-position"
+  | "unassigned";
+
+export type TacticInstructionAssignment = {
+  instructionIndex: number;
+  position: PlayerPosition;
+  card: {
+    spId: number;
+    spGrade: number | null;
+  } | null;
+  observedPosition: PlayerPosition | null;
+  observedPositionCode: number | null;
+  matchKind: TacticAssignmentMatchKind;
+};
+
+export type TacticApplicationGuide = {
+  recommendationConfigHash: TacticConfigHash;
+  templateId: TacticTemplateId;
+  referenceMatchId: string | null;
+  referencePlayedAt: string | null;
+  assignedSlots: number;
+  totalSlots: number;
+  validation: {
+    formation: "unconfirmed";
+    personalTactics: "unconfirmed";
+  };
+  assignments: TacticInstructionAssignment[];
+};
+
+export type TacticApplicationGuideSet = {
+  primary: TacticApplicationGuide;
+  alternative: TacticApplicationGuide;
+};
+
 export type ApiErrorType = "validation" | "configuration" | "external-api" | "empty-result";
 
 export type ApiErrorResponse = {
@@ -311,4 +347,5 @@ export type SearchResult = {
 export type SearchResultWithAnalysis = SearchResult & {
   analysis: PlayStyleAnalysis;
   recommendation: TacticRecommendationSet;
+  tacticApplicationGuides?: TacticApplicationGuideSet;
 };

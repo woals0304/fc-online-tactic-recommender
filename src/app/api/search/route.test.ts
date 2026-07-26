@@ -222,6 +222,30 @@ describe("GET /api/search", () => {
         }),
       ],
     });
+    expect(body.tacticApplicationGuides.primary).toMatchObject({
+      recommendationConfigHash: body.recommendation.primary.metadata.configHash,
+      templateId: body.recommendation.primary.metadata.templateId,
+      referenceMatchId: "match-1",
+      referencePlayedAt: "2026-07-26T10:00:00",
+      assignedSlots: 1,
+      validation: {
+        formation: "unconfirmed",
+        personalTactics: "unconfirmed",
+      },
+    });
+    expect(
+      body.tacticApplicationGuides.primary.assignments.find(
+        (assignment: { card: { spId: number } | null }) =>
+          assignment.card?.spId === 225136606,
+      ),
+    ).toMatchObject({
+      position: "ST",
+      card: { spId: 225136606, spGrade: 5 },
+      observedPosition: "ST",
+      observedPositionCode: 25,
+      matchKind: "exact-recent-position",
+    });
+    expect(body.squadProfile.recommendationImpact.applied).toBe(false);
   });
 
   it("공식 메타데이터 장애가 검색과 기존 전술 추천을 실패시키지 않는다", async () => {
@@ -241,6 +265,16 @@ describe("GET /api/search", () => {
       metadataStatus: "unavailable",
       cards: [expect.objectContaining({ spId: 225136606, name: null })],
     });
+    expect(body.tacticApplicationGuides.primary).toMatchObject({
+      referenceMatchId: null,
+      referencePlayedAt: null,
+      assignedSlots: 0,
+    });
+    expect(
+      body.tacticApplicationGuides.primary.assignments.every(
+        (assignment: { matchKind: string }) => assignment.matchKind === "unassigned",
+      ),
+    ).toBe(true);
   });
 
   it("손상된 선수 항목이 있어도 경기와 기존 추천을 유지한다", async () => {
@@ -257,6 +291,11 @@ describe("GET /api/search", () => {
     expect(body.matches[0].players).toEqual([]);
     expect(body.squadProfile.cards).toEqual([]);
     expect(isTacticRecommendationSet(body.recommendation)).toBe(true);
+    expect(body.tacticApplicationGuides.primary).toMatchObject({
+      referenceMatchId: null,
+      referencePlayedAt: null,
+      assignedSlots: 0,
+    });
     expect(metadataMocks.loadOfficialMetadata).not.toHaveBeenCalled();
   });
 

@@ -1,12 +1,19 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import type { FormEvent, SyntheticEvent } from "react";
+import type { CSSProperties, FormEvent, SyntheticEvent } from "react";
 
 import type {
   ApiErrorResponse,
+  NormalizedMatch,
+  NormalizedMatchPlayer,
+  PlayerInstruction,
+  PlayerPosition,
   RecentSquadCard,
   RecentSquadProfile,
+  TacticApplicationGuide,
+  TacticApplicationGuideSet,
+  TacticInstructionAssignment,
   TacticRecommendation,
   TacticRecommendationSet,
 } from "@/lib/fconline/types";
@@ -260,7 +267,15 @@ function ResultView({
       </div>
 
       <TacticRecommendationView recommendation={result.recommendation} />
-      {result.squadProfile ? <RecentSquadView profile={result.squadProfile} /> : null}
+      {result.squadProfile ? (
+        <RecentSquadView
+          key={`${result.user.ouid}:${result.matches[0]?.matchId ?? "no-match"}`}
+          profile={result.squadProfile}
+          matches={result.matches}
+          recommendations={result.recommendation}
+          applicationGuides={result.tacticApplicationGuides}
+        />
+      ) : null}
       <details className="result-details">
         <summary>플레이 성향과 추천 근거 보기</summary>
         <StyleAnalysisView analysis={result.analysis} />
@@ -303,7 +318,76 @@ function ResultView({
   );
 }
 
-function RecentSquadView({ profile }: { profile: RecentSquadProfile }) {
+type SquadViewMode = "pitch" | "list";
+type RecommendationKind = "primary" | "alternative";
+
+type PitchPosition = {
+  code: number;
+  label: string;
+  left: number;
+  top: number;
+};
+
+type MatchRosterItem = {
+  key: string;
+  player: NormalizedMatchPlayer;
+  card: RecentSquadCard | null;
+  position: PitchPosition | null;
+};
+
+type PitchPlacement<T> = {
+  item: T;
+  left: number;
+  top: number;
+};
+
+const PITCH_POSITIONS: Readonly<Record<number, PitchPosition>> = {
+  0: { code: 0, label: "GK", left: 50, top: 91 },
+  1: { code: 1, label: "SW", left: 50, top: 82 },
+  2: { code: 2, label: "RWB", left: 88, top: 67 },
+  3: { code: 3, label: "RB", left: 86, top: 76 },
+  4: { code: 4, label: "RCB", left: 68, top: 78 },
+  5: { code: 5, label: "CB", left: 50, top: 79 },
+  6: { code: 6, label: "LCB", left: 32, top: 78 },
+  7: { code: 7, label: "LB", left: 14, top: 76 },
+  8: { code: 8, label: "LWB", left: 12, top: 67 },
+  9: { code: 9, label: "RDM", left: 68, top: 60 },
+  10: { code: 10, label: "CDM", left: 50, top: 61 },
+  11: { code: 11, label: "LDM", left: 32, top: 60 },
+  12: { code: 12, label: "RM", left: 86, top: 48 },
+  13: { code: 13, label: "RCM", left: 70, top: 48 },
+  14: { code: 14, label: "CM", left: 50, top: 47 },
+  15: { code: 15, label: "LCM", left: 30, top: 48 },
+  16: { code: 16, label: "LM", left: 14, top: 48 },
+  17: { code: 17, label: "RAM", left: 70, top: 35 },
+  18: { code: 18, label: "CAM", left: 50, top: 34 },
+  19: { code: 19, label: "LAM", left: 30, top: 35 },
+  20: { code: 20, label: "RF", left: 68, top: 22 },
+  21: { code: 21, label: "CF", left: 50, top: 22 },
+  22: { code: 22, label: "LF", left: 32, top: 22 },
+  23: { code: 23, label: "RW", left: 85, top: 20 },
+  24: { code: 24, label: "RS", left: 65, top: 12 },
+  25: { code: 25, label: "ST", left: 50, top: 10 },
+  26: { code: 26, label: "LS", left: 35, top: 12 },
+  27: { code: 27, label: "LW", left: 15, top: 20 },
+  28: { code: 28, label: "SUB", left: 50, top: 105 },
+};
+
+const POSITION_CODES_BY_NAME = Object.fromEntries(
+  Object.values(PITCH_POSITIONS).map((position) => [position.label, position.code]),
+) as Readonly<Record<string, number>>;
+
+function RecentSquadView({
+  profile,
+  matches,
+  recommendations,
+  applicationGuides,
+}: {
+  profile: RecentSquadProfile;
+  matches: NormalizedMatch[];
+  recommendations: TacticRecommendationSet;
+  applicationGuides?: TacticApplicationGuideSet;
+}) {
   if (profile.cards.length === 0) {
     return (
       <aside className="squad-unavailable" role="note">
@@ -313,17 +397,57 @@ function RecentSquadView({ profile }: { profile: RecentSquadProfile }) {
     );
   }
 
+  const matchesWithPlayers = matches.filter((match) => match.players.length > 0);
+
+  return (
+    <RecentSquadWorkspace
+      profile={profile}
+      matches={matchesWithPlayers}
+      recommendations={recommendations}
+      applicationGuides={applicationGuides}
+    />
+  );
+}
+
+function RecentSquadWorkspace({
+  profile,
+  matches,
+  recommendations,
+  applicationGuides,
+}: {
+  profile: RecentSquadProfile;
+  matches: NormalizedMatch[];
+  recommendations: TacticRecommendationSet;
+  applicationGuides?: TacticApplicationGuideSet;
+}) {
+  const [selectedMatchId, setSelectedMatchId] = useState(matches[0]?.matchId ?? "");
+  const [viewMode, setViewMode] = useState<SquadViewMode>("pitch");
+  const [selectedPlayerKey, setSelectedPlayerKey] = useState("");
+  const selectedMatch =
+    matches.find((match) => match.matchId === selectedMatchId) ?? matches[0] ?? null;
+  const roster = selectedMatch ? createMatchRoster(selectedMatch, profile.cards) : [];
+  const selectedPlayer =
+    roster.find((item) => item.key === selectedPlayerKey) ??
+    roster.find((item) => item.position?.code !== 28) ??
+    roster[0] ??
+    null;
+
+  function handleMatchChange(matchId: string) {
+    setSelectedMatchId(matchId);
+    setSelectedPlayerKey("");
+  }
+
   return (
     <details className="result-details squad-details">
       <summary>
-        최근 사용 선수단 보기 ({profile.cards.length}종 · 선수 정보 {profile.matchesWithPlayerData}/
+        최근 경기 선수 배치 보기 ({profile.cards.length}종 · 선수 정보 {profile.matchesWithPlayerData}/
         {profile.requestedMatchCount}경기)
       </summary>
       <div className="squad-content">
         <div className="squad-notes" role="note">
           <p>
-            현재 보유 선수단이 아니라 최근 공식 경기 명단입니다. SUB는 후보 등록이며 실제 교체
-            출전을 확정하지 않습니다.
+            최근 공식 경기 명단이며 현재 보유·저장 스쿼드가 아닙니다. 등록 포지션을 정해진
+            위치에 표시할 뿐, 정확한 인게임 좌표나 포메이션 프리셋을 뜻하지 않습니다.
           </p>
           <p>{profile.recommendationImpact.reason}</p>
         </div>
@@ -332,14 +456,100 @@ function RecentSquadView({ profile }: { profile: RecentSquadProfile }) {
             공식 선수 메타데이터를 불러오지 못해 이름·시즌·포지션 일부를 ID로 표시합니다.
           </p>
         ) : null}
-        <div className="squad-grid">
-          {profile.cards.map((card) => (
-            <RecentSquadCardView
-              key={`${card.spId}:${card.spGrade ?? "unknown"}`}
-              card={card}
-            />
-          ))}
-        </div>
+
+        {selectedMatch ? (
+          <>
+            <div className="squad-workspace-toolbar">
+              <label>
+                <span>표시할 최근 경기</span>
+                <select
+                  value={selectedMatch.matchId}
+                  onChange={(event) => handleMatchChange(event.target.value)}
+                >
+                  {matches.map((match) => (
+                    <option key={match.matchId} value={match.matchId}>
+                      {formatMatchOption(match)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="squad-view-switch" aria-label="선수 배치 보기 방식">
+                <button
+                  type="button"
+                  aria-pressed={viewMode === "pitch"}
+                  onClick={() => setViewMode("pitch")}
+                >
+                  피치
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={viewMode === "list"}
+                  onClick={() => setViewMode("list")}
+                >
+                  목록
+                </button>
+              </div>
+            </div>
+
+            <div className="selected-match-heading">
+              <div>
+                <span className={`result-badge ${getResultClass(selectedMatch.result)}`}>
+                  {selectedMatch.result}
+                </span>
+                <strong>vs {selectedMatch.opponentNickname}</strong>
+              </div>
+              <span>
+                {formatDate(selectedMatch.playedAt)} · {formatScore(selectedMatch.score.for)} : {formatScore(selectedMatch.score.against)}
+              </span>
+            </div>
+
+            <div className="squad-workspace">
+              <div className="match-roster-view">
+                {viewMode === "pitch" ? (
+                  <MatchPitch
+                    roster={roster}
+                    selectedPlayerKey={selectedPlayer?.key ?? ""}
+                    onSelectPlayer={setSelectedPlayerKey}
+                  />
+                ) : (
+                  <MatchRosterList
+                    roster={roster.filter((item) => item.position?.code !== 28)}
+                    selectedPlayerKey={selectedPlayer?.key ?? ""}
+                    onSelectPlayer={setSelectedPlayerKey}
+                  />
+                )}
+                <SubstituteRail
+                  roster={roster.filter((item) => item.position?.code === 28)}
+                  selectedPlayerKey={selectedPlayer?.key ?? ""}
+                  onSelectPlayer={setSelectedPlayerKey}
+                />
+              </div>
+              <SelectedMatchPlayerPanel item={selectedPlayer} />
+            </div>
+          </>
+        ) : (
+          <p className="squad-empty-match" role="note">
+            선수 명단이 포함된 최근 경기를 찾지 못해 피치 배치를 표시할 수 없습니다.
+          </p>
+        )}
+
+        <ApplicationGuideSection
+          guides={applicationGuides}
+          recommendations={recommendations}
+          cards={profile.cards}
+        />
+
+        <details className="squad-history-details">
+          <summary>최근 {profile.analyzedMatchCount}경기 사용 카드 전체 보기</summary>
+          <div className="squad-grid">
+            {profile.cards.map((card) => (
+              <RecentSquadCardView
+                key={`${card.spId}:${card.spGrade ?? "unknown"}`}
+                card={card}
+              />
+            ))}
+          </div>
+        </details>
         <p className="ability-boundary">
           정확한 강화 능력치는 각 카드의 공식 데이터센터 링크에서 확인하세요. 링크의 수치는
           카드·강화 기준이며 팀컬러·적응도·훈련코치 등 실제 인게임 보정은 별도입니다.
@@ -347,6 +557,639 @@ function RecentSquadView({ profile }: { profile: RecentSquadProfile }) {
       </div>
     </details>
   );
+}
+
+function MatchPitch({
+  roster,
+  selectedPlayerKey,
+  onSelectPlayer,
+}: {
+  roster: MatchRosterItem[];
+  selectedPlayerKey: string;
+  onSelectPlayer: (key: string) => void;
+}) {
+  const pitchRoster = roster.filter(
+    (item): item is MatchRosterItem & { position: PitchPosition } =>
+      item.position !== null && item.position.code !== 28,
+  );
+  const unplacedRoster = roster.filter((item) => item.position === null);
+  const placements = createPitchPlacements(pitchRoster, (item) => item.position);
+
+  return (
+    <>
+      <div className="squad-pitch" role="group" aria-label="선택 경기 등록 포지션 피치">
+        <div className="pitch-markings" aria-hidden="true" />
+        <ol className="pitch-player-list">
+          {placements.map(({ item, left, top }) => (
+            <li
+              key={item.key}
+              style={{ left: `${left}%`, top: `${top}%` } as CSSProperties}
+            >
+              <PitchPlayerButton
+                item={item}
+                selected={item.key === selectedPlayerKey}
+                onSelect={() => onSelectPlayer(item.key)}
+              />
+            </li>
+          ))}
+        </ol>
+      </div>
+      {unplacedRoster.length > 0 ? (
+        <div className="unplaced-roster" role="group" aria-label="위치를 확인할 수 없는 선수">
+          <strong>위치 확인 불가</strong>
+          <MatchRosterList
+            roster={unplacedRoster}
+            selectedPlayerKey={selectedPlayerKey}
+            onSelectPlayer={onSelectPlayer}
+          />
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function PitchPlayerButton({
+  item,
+  selected,
+  onSelect,
+}: {
+  item: MatchRosterItem;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  const name = getCardName(item);
+  const positionName = item.position?.label ?? "위치 미상";
+
+  return (
+    <button
+      type="button"
+      className="pitch-player-button"
+      aria-pressed={selected}
+      aria-label={`${name}, 강화 ${item.player.spGrade ?? "정보 없음"}, ${positionName}, 이 경기 평점 ${item.player.performance.rating ?? "정보 없음"}`}
+      onClick={onSelect}
+    >
+      <span className="pitch-player-season">{item.card?.seasonName ?? "FC"}</span>
+      <span className="pitch-player-photo" aria-hidden="true">
+        {item.card ? (
+          <img
+            src={item.card.playerImageUrl}
+            data-fallback-src={item.card.playerFallbackImageUrl}
+            alt=""
+            loading="lazy"
+            onError={handlePlayerImageError}
+          />
+        ) : (
+          <span>FC</span>
+        )}
+      </span>
+      <strong title={name}>{name}</strong>
+      <span>
+        +{item.player.spGrade ?? "?"} · {positionName}
+      </span>
+      {item.player.performance.rating !== null ? (
+        <small>평점 {item.player.performance.rating}</small>
+      ) : null}
+    </button>
+  );
+}
+
+function MatchRosterList({
+  roster,
+  selectedPlayerKey,
+  onSelectPlayer,
+}: {
+  roster: MatchRosterItem[];
+  selectedPlayerKey: string;
+  onSelectPlayer: (key: string) => void;
+}) {
+  return (
+    <ul className="match-roster-list">
+      {roster.map((item) => {
+        const name = getCardName(item);
+
+        return (
+          <li key={item.key}>
+            <button
+              type="button"
+              aria-pressed={item.key === selectedPlayerKey}
+              onClick={() => onSelectPlayer(item.key)}
+            >
+              <span className="roster-list-photo" aria-hidden="true">
+                {item.card ? (
+                  <img
+                    src={item.card.playerImageUrl}
+                    data-fallback-src={item.card.playerFallbackImageUrl}
+                    alt=""
+                    loading="lazy"
+                    onError={handlePlayerImageError}
+                  />
+                ) : (
+                  "FC"
+                )}
+              </span>
+              <span className="roster-list-identity">
+                <strong>{name}</strong>
+                <small>
+                  {item.card?.seasonName ?? "시즌 정보 없음"} · +{item.player.spGrade ?? "?"} · {item.position?.label ?? "위치 미상"}
+                </small>
+              </span>
+              <span className="roster-list-performance">
+                평점 {item.player.performance.rating ?? "-"} · 골 {item.player.performance.goals ?? "-"} · 도움 {item.player.performance.assists ?? "-"}
+              </span>
+            </button>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function SubstituteRail({
+  roster,
+  selectedPlayerKey,
+  onSelectPlayer,
+}: {
+  roster: MatchRosterItem[];
+  selectedPlayerKey: string;
+  onSelectPlayer: (key: string) => void;
+}) {
+  if (roster.length === 0) {
+    return null;
+  }
+
+  return (
+    <section className="substitute-section" aria-labelledby="substitute-heading">
+      <div className="substitute-heading">
+        <strong id="substitute-heading">후보 등록(SUB)</strong>
+        <span>후보 명단만 확인되며 실제 교체 출전을 확정하지 않습니다.</span>
+      </div>
+      <div className="substitute-rail">
+        {roster.map((item) => (
+          <button
+            key={item.key}
+            type="button"
+            aria-pressed={item.key === selectedPlayerKey}
+            onClick={() => onSelectPlayer(item.key)}
+          >
+            <strong>{getCardName(item)}</strong>
+            <span>+{item.player.spGrade ?? "?"} · SUB</span>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function SelectedMatchPlayerPanel({ item }: { item: MatchRosterItem | null }) {
+  if (!item) {
+    return (
+      <aside className="selected-player-panel is-empty" role="note">
+        피치나 목록에서 선수를 선택하면 해당 경기 기록을 확인할 수 있습니다.
+      </aside>
+    );
+  }
+
+  const name = getCardName(item);
+  const performance = item.player.performance;
+  const isSubstitute = item.position?.code === 28;
+
+  return (
+    <aside className="selected-player-panel" aria-live="polite" aria-atomic="true">
+      <div className="selected-player-identity">
+        <span className="squad-player-image" aria-hidden="true">
+          <span>FC</span>
+          {item.card ? (
+            <img
+              src={item.card.playerImageUrl}
+              data-fallback-src={item.card.playerFallbackImageUrl}
+              alt=""
+              width="72"
+              height="72"
+              loading="lazy"
+              onError={handlePlayerImageError}
+            />
+          ) : null}
+        </span>
+        <div>
+          <span className="squad-season">{item.card?.seasonName ?? "시즌 정보 없음"}</span>
+          <h3>{name}</h3>
+          <p>
+            <strong>+{item.player.spGrade ?? "?"}</strong> · {item.position?.label ?? "위치 미상"}
+          </p>
+        </div>
+      </div>
+      <div className="performance-heading">
+        <strong>{isSubstitute ? "경기 응답 기록" : "이 경기 활약"}</strong>
+        <span>player.status</span>
+      </div>
+      <dl className="selected-player-stats">
+        <div><dt>평점</dt><dd>{performance.rating ?? "-"}</dd></div>
+        <div><dt>골</dt><dd>{performance.goals ?? "-"}</dd></div>
+        <div><dt>도움</dt><dd>{performance.assists ?? "-"}</dd></div>
+        <div><dt>슈팅</dt><dd>{performance.shots ?? "-"}</dd></div>
+      </dl>
+      <p className="performance-boundary">
+        {isSubstitute
+          ? "SUB는 후보 등록을 뜻하며 이 기록만으로 실제 교체 출전을 확정하지 않습니다."
+          : "이 수치는 해당 경기 활약이며 카드 고유 능력치가 아닙니다."}
+      </p>
+      {item.card?.officialDataCenterUrl ? (
+        <a
+          className="ability-link"
+          href={item.card.officialDataCenterUrl}
+          target="_blank"
+          rel="noreferrer"
+        >
+          {name} 공식 능력치 보기
+          <span className="visually-hidden"> — 새 창</span>
+        </a>
+      ) : (
+        <span className="ability-link is-unavailable">공식 능력치 링크 없음</span>
+      )}
+    </aside>
+  );
+}
+
+function ApplicationGuideSection({
+  guides,
+  recommendations,
+  cards,
+}: {
+  guides?: TacticApplicationGuideSet;
+  recommendations: TacticRecommendationSet;
+  cards: RecentSquadCard[];
+}) {
+  const [selectedKind, setSelectedKind] = useState<RecommendationKind>("primary");
+  const options = guides
+    ? (["primary", "alternative"] as const)
+        .map((kind) => ({
+          kind,
+          guide: guides[kind],
+          recommendation: recommendations[kind],
+        }))
+        .filter(({ guide, recommendation }) =>
+          isGuideForRecommendation(guide, recommendation),
+        )
+    : [];
+  const selectedOption =
+    options.find((option) => option.kind === selectedKind) ?? options[0] ?? null;
+
+  if (!selectedOption) {
+    return null;
+  }
+
+  return (
+    <details className="application-guide-details">
+      <summary>추천 배치 후보와 개인전술 연결 보기 · 미확인</summary>
+      <div className="application-guide-content">
+        <div className="application-guide-warning" role="note">
+          <strong>추천 배치 후보</strong>
+          <p>
+            실제 경기에서 사용한 포메이션이나 개인전술이 아닙니다. 최근 카드의 등록 위치를
+            추천 슬롯에 연결한 참고 화면이며, 포메이션과 개인전술은 PC 클라이언트 검증 전까지
+            복사에서 제외됩니다.
+          </p>
+        </div>
+
+        {options.length > 1 ? (
+          <div className="application-guide-switch" aria-label="표시할 추천 전술">
+            {options.map((option) => (
+              <button
+                key={option.kind}
+                type="button"
+                aria-pressed={option.kind === selectedOption.kind}
+                onClick={() => setSelectedKind(option.kind)}
+              >
+                {option.kind === "primary" ? "주전술" : "대안 전술"}
+              </button>
+            ))}
+          </div>
+        ) : null}
+
+        <ApplicationGuidePitch
+          key={`${selectedOption.kind}:${selectedOption.guide.recommendationConfigHash}`}
+          kind={selectedOption.kind}
+          guide={selectedOption.guide}
+          recommendation={selectedOption.recommendation}
+          cards={cards}
+        />
+      </div>
+    </details>
+  );
+}
+
+function ApplicationGuidePitch({
+  kind,
+  guide,
+  recommendation,
+  cards,
+}: {
+  kind: RecommendationKind;
+  guide: TacticApplicationGuide;
+  recommendation: TacticRecommendation;
+  cards: RecentSquadCard[];
+}) {
+  const guideRoster = createGuideRoster(guide.assignments, recommendation, cards);
+  const [selectedAssignmentKey, setSelectedAssignmentKey] = useState(
+    guideRoster[0]?.key ?? "",
+  );
+  const selectedAssignment =
+    guideRoster.find((item) => item.key === selectedAssignmentKey) ?? guideRoster[0] ?? null;
+  const placements = createPitchPlacements(guideRoster, (item) => item.position);
+
+  return (
+    <section className="application-guide" aria-label={`${kind === "primary" ? "주전술" : "대안 전술"} 추천 배치 후보`}>
+      <div className="application-guide-heading">
+        <div>
+          <span className="tactic-label">{kind === "primary" ? "주전술" : "대안 전술"}</span>
+          <h3>{recommendation.title}</h3>
+        </div>
+        <div className="application-guide-status">
+          <strong>{recommendation.formation}</strong>
+          <ValidationBadge status={guide.validation.formation} />
+          <span>{guide.assignedSlots}/{guide.totalSlots}자리 연결</span>
+        </div>
+      </div>
+      <p className="application-guide-reference">
+        카드 연결 기준: {guide.referencePlayedAt ? formatDate(guide.referencePlayedAt) : "최근 경기 정보 없음"}
+      </p>
+      <p className="application-guide-scope">
+        개인전술 지시가 있는 {guide.totalSlots}자리만 표시하며, 전체 11명 포메이션 배치가 아닙니다.
+      </p>
+
+      <div className="application-guide-workspace">
+        <div className="squad-pitch application-pitch" role="group" aria-label="추천 포메이션 위치 후보">
+          <div className="pitch-markings" aria-hidden="true" />
+          <ol className="pitch-player-list">
+            {placements.map(({ item, left, top }) => (
+              <li
+                key={item.key}
+                style={{ left: `${left}%`, top: `${top}%` } as CSSProperties}
+              >
+                <GuideSlotButton
+                  item={item}
+                  selected={item.key === selectedAssignment?.key}
+                  onSelect={() => setSelectedAssignmentKey(item.key)}
+                />
+              </li>
+            ))}
+          </ol>
+        </div>
+        <ApplicationAssignmentPanel item={selectedAssignment} />
+      </div>
+    </section>
+  );
+}
+
+type GuideRosterItem = {
+  key: string;
+  assignment: TacticInstructionAssignment;
+  instruction: PlayerInstruction | null;
+  card: RecentSquadCard | null;
+  position: PitchPosition;
+};
+
+function GuideSlotButton({
+  item,
+  selected,
+  onSelect,
+}: {
+  item: GuideRosterItem;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  const cardName = item.card?.name ??
+    (item.assignment.card ? `선수 ID ${item.assignment.card.spId}` : "선수 미배정");
+  const matchKindLabel = formatAssignmentMatchKind(item.assignment.matchKind);
+
+  return (
+    <button
+      type="button"
+      className={`guide-slot-button is-${item.assignment.matchKind}`}
+      aria-pressed={selected}
+      aria-label={`${item.assignment.position} 자리, ${cardName}, ${matchKindLabel}, 추천 역할 보기`}
+      onClick={onSelect}
+    >
+      <span className="guide-slot-position">{item.assignment.position}</span>
+      {item.card ? (
+        <span className="guide-slot-photo" aria-hidden="true">
+          <img
+            src={item.card.playerImageUrl}
+            data-fallback-src={item.card.playerFallbackImageUrl}
+            alt=""
+            loading="lazy"
+            onError={handlePlayerImageError}
+          />
+        </span>
+      ) : (
+        <span className="guide-slot-empty" aria-hidden="true">＋</span>
+      )}
+      <strong title={cardName}>{cardName}</strong>
+      <small>{matchKindLabel}</small>
+    </button>
+  );
+}
+
+function ApplicationAssignmentPanel({ item }: { item: GuideRosterItem | null }) {
+  if (!item) {
+    return (
+      <aside className="application-assignment-panel is-empty" role="note">
+        표시할 추천 포지션이 없습니다.
+      </aside>
+    );
+  }
+
+  const { assignment, instruction, card } = item;
+  const cardName = card?.name ??
+    (assignment.card ? `선수 ID ${assignment.card.spId}` : "선수 미배정");
+
+  return (
+    <aside className="application-assignment-panel" aria-live="polite" aria-atomic="true">
+      <div className="assignment-heading">
+        <div>
+          <span>{assignment.position} 자리</span>
+          <h4>{cardName}</h4>
+        </div>
+        <span className={`assignment-match-badge is-${assignment.matchKind}`}>
+          {formatAssignmentMatchKind(assignment.matchKind)}
+        </span>
+      </div>
+      {assignment.card ? (
+        <p className="assignment-card-meta">
+          강화 +{assignment.card.spGrade ?? "?"}
+          {assignment.observedPosition ? ` · 최근 등록 위치 ${assignment.observedPosition}` : ""}
+        </p>
+      ) : (
+        <p className="assignment-card-meta">최근 카드에서 이 자리에 연결할 선수를 찾지 못했습니다.</p>
+      )}
+
+      <div className="assignment-role">
+        <span>추천 역할(설명)</span>
+        <strong>{instruction?.roleDescription ?? "역할 정보 없음"}</strong>
+      </div>
+
+      {card?.officialDataCenterUrl ? (
+        <a
+          className="ability-link"
+          href={card.officialDataCenterUrl}
+          target="_blank"
+          rel="noreferrer"
+        >
+          {cardName} 공식 능력치 보기
+          <span className="visually-hidden"> — 새 창</span>
+        </a>
+      ) : null}
+
+      {instruction ? (
+        <details className="assignment-personal-details">
+          <summary>개인전술 후보 보기 · 미확인</summary>
+          <div>
+            <p className="unconfirmed-instruction-note" role="note">
+              API에서 실제 사용 여부를 확인한 값이 아닙니다. 현행 PC 클라이언트 검증 전 후보이며
+              복사 대상이 아닙니다.
+            </p>
+            <dl className="personal-tactics">
+              {instruction.uiSettings.map((setting, index) => (
+                <div key={`${index}-${setting.group}-${setting.value}`}>
+                  <dt>{setting.group}</dt>
+                  <dd>
+                    <span>{setting.value}</span>
+                    <ConfirmationBadge confirmed={setting.confirmed} />
+                  </dd>
+                </div>
+              ))}
+            </dl>
+            <div className="participation-settings">
+              <ParticipationSetting label="공격 참여도" setting={instruction.attackParticipation} />
+              <ParticipationSetting label="수비 참여도" setting={instruction.defenseParticipation} />
+            </div>
+          </div>
+        </details>
+      ) : null}
+    </aside>
+  );
+}
+
+function createMatchRoster(
+  match: NormalizedMatch,
+  cards: RecentSquadCard[],
+): MatchRosterItem[] {
+  return match.players
+    .map((player, index) => ({
+      key: `${player.spId}:${player.spGrade ?? "unknown"}:${player.spPosition ?? "unknown"}:${index}`,
+      player,
+      card: findSquadCard(cards, player.spId, player.spGrade),
+      position:
+        player.spPosition === null ? null : PITCH_POSITIONS[player.spPosition] ?? null,
+    }))
+    .sort((left, right) => {
+      const positionDifference =
+        (left.position?.code ?? Number.MAX_SAFE_INTEGER) -
+        (right.position?.code ?? Number.MAX_SAFE_INTEGER);
+
+      return positionDifference || left.player.spId - right.player.spId;
+    });
+}
+
+function createGuideRoster(
+  assignments: TacticInstructionAssignment[],
+  recommendation: TacticRecommendation,
+  cards: RecentSquadCard[],
+): GuideRosterItem[] {
+  return assignments
+    .map<GuideRosterItem | null>((assignment) => {
+      const positionCode = POSITION_CODES_BY_NAME[assignment.position];
+      const position = PITCH_POSITIONS[positionCode];
+
+      if (!position || position.code === 28) {
+        return null;
+      }
+
+      return {
+        key: `${assignment.instructionIndex}:${assignment.position}`,
+        assignment,
+        instruction: recommendation.playerInstructions[assignment.instructionIndex] ?? null,
+        card: assignment.card
+          ? findSquadCard(cards, assignment.card.spId, assignment.card.spGrade)
+          : null,
+        position,
+      };
+    })
+    .filter((item): item is GuideRosterItem => item !== null)
+    .sort((left, right) =>
+      left.position.code - right.position.code ||
+      left.assignment.instructionIndex - right.assignment.instructionIndex,
+    );
+}
+
+function createPitchPlacements<T>(
+  items: T[],
+  readPosition: (item: T) => PitchPosition,
+): PitchPlacement<T>[] {
+  const positionCounts = new Map<number, number>();
+  const positionIndexes = new Map<number, number>();
+
+  for (const item of items) {
+    const code = readPosition(item).code;
+    positionCounts.set(code, (positionCounts.get(code) ?? 0) + 1);
+  }
+
+  return items.map((item) => {
+    const position = readPosition(item);
+    const index = positionIndexes.get(position.code) ?? 0;
+    const count = positionCounts.get(position.code) ?? 1;
+    const horizontalOffset = (index - (count - 1) / 2) * 9;
+
+    positionIndexes.set(position.code, index + 1);
+
+    return {
+      item,
+      left: clampPitchCoordinate(position.left + horizontalOffset),
+      top: clampPitchCoordinate(position.top),
+    };
+  });
+}
+
+function findSquadCard(
+  cards: RecentSquadCard[],
+  spId: number,
+  spGrade: number | null,
+) {
+  return cards.find((card) => card.spId === spId && card.spGrade === spGrade) ?? null;
+}
+
+function getCardName(item: MatchRosterItem) {
+  return item.card?.name ?? `선수 ID ${item.player.spId}`;
+}
+
+function formatMatchOption(match: NormalizedMatch) {
+  return `${formatDate(match.playedAt)} · vs ${match.opponentNickname} · ${formatScore(match.score.for)}:${formatScore(match.score.against)}`;
+}
+
+function formatAssignmentMatchKind(kind: TacticInstructionAssignment["matchKind"]) {
+  if (kind === "exact-recent-position") {
+    return "최근 동일 위치";
+  }
+
+  if (kind === "compatible-position") {
+    return "호환 위치 후보";
+  }
+
+  return "선수 미배정";
+}
+
+function isGuideForRecommendation(
+  guide: TacticApplicationGuide,
+  recommendation: TacticRecommendation,
+) {
+  return (
+    guide.recommendationConfigHash === recommendation.metadata.configHash &&
+    guide.templateId === recommendation.metadata.templateId
+  );
+}
+
+function clampPitchCoordinate(value: number) {
+  return Math.min(Math.max(value, 12), 88);
 }
 
 function RecentSquadCardView({ card }: { card: RecentSquadCard }) {
