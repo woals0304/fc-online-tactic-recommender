@@ -139,6 +139,97 @@ describe("normalizeSearchResult", () => {
     });
   });
 
+  it("최근 경기 선수 카드와 경기 활약을 별도 구조로 보존한다", () => {
+    const result = normalizeSearchResult(basicUser, [
+      {
+        matchId: "players",
+        matchInfo: [
+          {
+            ouid: basicUser.ouid,
+            player: [
+              {
+                spId: "225136606",
+                spGrade: "9",
+                spPosition: "13",
+                status: {
+                  spRating: "8.4",
+                  goal: 1,
+                  assist: "2",
+                  shoot: 3,
+                  effectiveShoot: 2,
+                  passTry: 24,
+                  passSuccess: 21,
+                  tackleTry: 4,
+                  tackle: 3,
+                  intercept: 2,
+                  block: 0,
+                },
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+
+    expect(result.matches[0].players).toEqual([
+      {
+        spId: 225136606,
+        spGrade: 9,
+        spPosition: 13,
+        performance: {
+          rating: 8.4,
+          goals: 1,
+          assists: 2,
+          shots: 3,
+          effectiveShots: 2,
+          passesAttempted: 24,
+          passesCompleted: 21,
+          tacklesAttempted: 4,
+          tacklesCompleted: 3,
+          interceptions: 2,
+          blocks: 0,
+        },
+      },
+    ]);
+  });
+
+  it("손상된 선수만 제외하고 알 수 없는 포지션과 결측 활약은 허용한다", () => {
+    const details: FcOnlineMatchDetailResponse[] = [
+      {
+        matchId: "partial-players",
+        matchInfo: [
+          {
+            ouid: basicUser.ouid,
+            player: [
+              { spId: 0, spGrade: 1, spPosition: 0 },
+              { spId: "not-a-number", spGrade: 1, spPosition: 0 },
+              {
+                spId: 999000001,
+                spGrade: 99,
+                spPosition: 999,
+                status: { goal: -1, spRating: "-2" },
+              },
+            ],
+          },
+        ],
+      },
+    ];
+    const before = structuredClone(details);
+    const result = normalizeSearchResult(basicUser, details);
+
+    expect(result.matches[0].players).toHaveLength(1);
+    expect(result.matches[0].players[0]).toMatchObject({
+      spId: 999000001,
+      spGrade: null,
+      spPosition: 999,
+      performance: {
+        rating: null,
+        goals: null,
+      },
+    });
+    expect(details).toEqual(before);
+  });
+
   it("알 수 없는 결과를 별도 집계하고 누락된 경기 ID에 고유 fallback을 부여한다", () => {
     const result = normalizeSearchResult(basicUser, [
       {

@@ -2,7 +2,9 @@ import type {
   FcOnlineBasicUserResponse,
   FcOnlineMatchDetailResponse,
   FcOnlineMatchInfo,
+  FcOnlineMatchPlayer,
   NormalizedMatch,
+  NormalizedMatchPlayer,
   SearchResult,
 } from "./types";
 
@@ -74,7 +76,49 @@ function normalizeMatch(ouid: string, detail: FcOnlineMatchDetailResponse, detai
       ),
       dribbles: readNumber(matchDetail, "dribble"),
     },
+    players: normalizePlayers(me.player),
   };
+}
+
+function normalizePlayers(value: FcOnlineMatchPlayer[] | undefined): NormalizedMatchPlayer[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((player) => {
+    if (!isRecord(player)) {
+      return [];
+    }
+
+    const spId = readInteger(player.spId, 1);
+
+    if (spId === null) {
+      return [];
+    }
+
+    const status = isRecord(player.status) ? player.status : {};
+
+    return [
+      {
+        spId,
+        spGrade: readInteger(player.spGrade, 1, 13),
+        spPosition: readInteger(player.spPosition, 0),
+        performance: {
+          rating: readNonNegativeNumber(status, "spRating"),
+          goals: readNonNegativeNumber(status, "goal"),
+          assists: readNonNegativeNumber(status, "assist"),
+          shots: readNonNegativeNumber(status, "shoot"),
+          effectiveShots: readNonNegativeNumber(status, "effectiveShoot"),
+          passesAttempted: readNonNegativeNumber(status, "passTry"),
+          passesCompleted: readNonNegativeNumber(status, "passSuccess"),
+          tacklesAttempted: readNonNegativeNumber(status, "tackleTry"),
+          tacklesCompleted: readNonNegativeNumber(status, "tackle"),
+          interceptions: readNonNegativeNumber(status, "intercept"),
+          blocks: readNonNegativeNumber(status, "block"),
+        },
+      },
+    ];
+  });
 }
 
 function normalizeResult(value: string | null): NormalizedMatch["result"] {
@@ -117,6 +161,49 @@ function readNumber(source: Record<string, unknown>, key: string) {
   }
 
   return null;
+}
+
+function readInteger(value: unknown, minimum: number, maximum = Number.MAX_SAFE_INTEGER) {
+  const parsed = readNumericValue(value);
+
+  if (
+    parsed === null ||
+    !Number.isSafeInteger(parsed) ||
+    parsed < minimum ||
+    parsed > maximum
+  ) {
+    return null;
+  }
+
+  return parsed;
+}
+
+function readNonNegativeNumber(source: Record<string, unknown>, key: string) {
+  const value = readNumber(source, key);
+  return value !== null && value >= 0 ? value : null;
+}
+
+function readNumericValue(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim();
+
+    if (!normalized) {
+      return null;
+    }
+
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function normalizeMatchId(value: string | undefined, detailIndex: number) {
