@@ -13,6 +13,8 @@
   --draw: #6b7280;
   --loss: #b42318;
   --unknown: #8a5a00;
+  --warning: #8a4b08;
+  --warning-bg: #fff8eb;
 }
 
 * {
@@ -370,9 +372,145 @@ h1 {
   white-space: nowrap;
 }
 
+.tactic-metadata {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: white;
+  overflow: hidden;
+}
+
+.metadata-item {
+  min-width: 0;
+  border-right: 1px solid var(--line);
+  padding: 10px 12px;
+}
+
+.metadata-item:last-child {
+  border-right: 0;
+}
+
+.metadata-item dt {
+  margin-bottom: 5px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.metadata-item dd {
+  margin: 0;
+  line-height: 1.4;
+}
+
+.metadata-item code {
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.validation-metadata dd {
+  display: flex;
+  align-items: center;
+  min-height: 1.4rem;
+}
+
+.validation-summary {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  align-items: center;
+  border: 1px solid #e7c78f;
+  border-left: 4px solid var(--warning);
+  border-radius: 6px;
+  padding: 11px 12px;
+  background: var(--warning-bg);
+}
+
+.validation-summary > div {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+}
+
+.validation-summary > div > span:first-child {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.validation-summary p {
+  flex-basis: 100%;
+  margin: 0;
+  color: #684015;
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+
+.validation-badge,
+.confirmation-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.validation-badge.is-confirmed,
+.confirmation-badge.is-confirmed {
+  border-color: #a6d8bd;
+  background: #eaf7ef;
+  color: #0a6337;
+}
+
+.validation-badge.is-partial {
+  border-color: #e7c78f;
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
+.validation-badge.is-unconfirmed,
+.confirmation-badge.is-unconfirmed {
+  border-color: #e5b8b3;
+  background: var(--error-bg);
+  color: var(--error);
+}
+
 .tactic-block h4 {
   margin-bottom: 12px;
   font-size: 1rem;
+}
+
+.tactic-block-heading {
+  margin-bottom: 12px;
+}
+
+.tactic-block-heading h4 {
+  margin-bottom: 4px;
+}
+
+.tactic-block-heading > span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.unconfirmed-instruction-note {
+  margin: -4px 0 10px;
+  border-radius: 6px;
+  padding: 9px 10px;
+  background: var(--error-bg);
+  color: #81231b;
+  font-size: 0.8rem;
+  line-height: 1.5;
 }
 
 .setting-grid {
@@ -421,7 +559,7 @@ h1 {
   background: white;
 }
 
-.instruction-list div {
+.instruction-heading {
   display: flex;
   gap: 8px;
   align-items: baseline;
@@ -433,14 +571,30 @@ h1 {
   display: block;
 }
 
-.instruction-list span,
-.instruction-list small {
+.instruction-heading > span,
+.instruction-heading small {
   color: var(--muted);
+}
+
+.instruction-heading > span {
+  display: grid;
+  gap: 2px;
+  text-align: right;
+}
+
+.instruction-heading small {
+  font-size: 0.72rem;
 }
 
 .instruction-list p {
   margin-bottom: 6px;
   line-height: 1.5;
+}
+
+.setting-kind {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
 }
 
 .personal-tactics {
@@ -453,6 +607,7 @@ h1 {
   display: grid;
   grid-template-columns: minmax(90px, 0.45fr) minmax(0, 1fr);
   gap: 8px;
+  align-items: start;
   margin-bottom: 0;
 }
 
@@ -466,9 +621,38 @@ h1 {
   color: var(--muted);
 }
 
-.instruction-list small {
-  display: block;
-  line-height: 1.45;
+.personal-tactics dd {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 8px;
+  align-items: center;
+  justify-content: flex-end;
+  text-align: right;
+}
+
+.participation-settings {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  border-top: 1px solid var(--line);
+  padding-top: 9px;
+}
+
+.participation-settings > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 7px;
+  align-items: center;
+}
+
+.participation-settings > div > span:first-child {
+  flex-basis: 100%;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.participation-settings strong {
+  font-size: 0.92rem;
 }
 
 .tactic-explanation {
@@ -588,14 +772,38 @@ footer {
   .summary-grid,
   .detail-grid,
   .style-grid,
-  .tactic-card {
+  .tactic-card,
+  .tactic-metadata {
     grid-template-columns: 1fr;
   }
 
   .tactic-card-head,
-  .instruction-list div {
+  .instruction-heading {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .metadata-item {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .metadata-item:last-child {
+    border-bottom: 0;
+  }
+
+  .instruction-heading > span {
+    text-align: left;
+  }
+
+  .personal-tactics div,
+  .participation-settings {
+    grid-template-columns: 1fr;
+  }
+
+  .personal-tactics dd {
+    justify-content: flex-start;
+    text-align: left;
   }
 
   .section-title {

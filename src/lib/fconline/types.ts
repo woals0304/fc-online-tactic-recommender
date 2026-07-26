@@ -70,41 +70,145 @@ export type PlayStyleAnalysis = {
   confidence: AnalysisConfidence;
 };
 
+export type Scale10 = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
+
+export type Scale5 = 1 | 2 | 3 | 4 | 5;
+
+export type TeamMentality =
+  | "전원 수비"
+  | "매우 수비적"
+  | "수비적"
+  | "보통"
+  | "공격적"
+  | "매우 공격적"
+  | "전원 공격";
+
+export type DefensiveStyle =
+  | "후퇴"
+  | "밸런스"
+  | "볼 터치 실수 시 압박"
+  | "공 뺏긴 직후 압박"
+  | "지속적인 압박";
+
+export type AttackingStyle = "짧은 패스" | "밸런스" | "긴 패스" | "빠른 빌드업";
+
+export type TacticSchemaVersion = "fc-online-12nf-2026-03-26";
+
+export type GamePatchVersion = "12th-next-field-2026-03-26";
+
+export type TacticTemplateVersion = "1.0.0";
+
+export type TacticTemplateId =
+  | "risk-possession"
+  | "risk-counter"
+  | "attack-possession"
+  | "attack-and-shoot"
+  | "possession-scoring"
+  | "possession-focused"
+  | "defense-risk"
+  | "balanced"
+  | "compact-possession-alternative";
+
+export type FormationCandidate =
+  | "4-2-2-2"
+  | "4-3-2-1"
+  | "4-3-3 홀딩"
+  | "4-1-4-1"
+  | "5-2-3"
+  | "4-4-2"
+  | "4-2-3-1";
+
+export type PlayerPosition =
+  | "ST"
+  | "LS"
+  | "RS"
+  | "LW"
+  | "RW"
+  | "LF"
+  | "RF"
+  | "LM"
+  | "RM"
+  | "LAM"
+  | "RAM"
+  | "CAM"
+  | "LCM"
+  | "CM"
+  | "RCM"
+  | "CDM"
+  | "LDM"
+  | "RDM"
+  | "LWB"
+  | "RWB"
+  | "LB"
+  | "RB"
+  | "LCB"
+  | "CB"
+  | "RCB";
+
+export type TacticConfigHash = `sha256:${string}`;
+
 export type TeamTactics = {
-  teamMentality: string;
+  schemaVersion: TacticSchemaVersion;
+  teamMentality: TeamMentality;
   defensiveTactics: {
-    defensiveStyle: string;
-    width: number;
-    depth: number;
+    defensiveStyle: DefensiveStyle;
+    width: Scale10;
+    depth: Scale10;
   };
   offensiveTactics: {
-    buildUpPlay: string;
-    width: number;
-    playersInBox: number;
-    corners: number;
-    freeKicks: number;
+    buildUpPlay: AttackingStyle;
+    chanceCreation: AttackingStyle;
+    width: Scale10;
+    playersInBox: Scale10;
+    corners: Scale5;
+    freeKicks: Scale5;
   };
 };
 
-export type ParticipationLevel = 1 | 2 | 3;
+// 현행 클라이언트의 참여도 범위는 아직 수동 검증 전이므로 숫자 범위를 확정하지 않는다.
+export type ParticipationLevel = number;
 
 export type PersonalTacticSetting = {
-  menu: string;
+  group: string;
   value: string;
+  confirmed: false;
 };
 
 export type PlayerInstruction = {
-  position: string;
-  role: string;
-  personalTactics: PersonalTacticSetting[];
-  attackParticipation: ParticipationLevel;
-  defenseParticipation: ParticipationLevel;
+  positions: PlayerPosition[];
+  roleDescription: string;
+  uiSettings: PersonalTacticSetting[];
+  attackParticipation: {
+    value: ParticipationLevel;
+    confirmed: false;
+  };
+  defenseParticipation: {
+    value: ParticipationLevel;
+    confirmed: false;
+  };
+};
+
+export type TacticCompatibility = {
+  overall: "partial";
+  teamTactics: "confirmed";
+  formation: "unconfirmed";
+  personalTactics: "unconfirmed";
+};
+
+export type TacticRecommendationMetadata = {
+  schemaVersion: TacticSchemaVersion;
+  gamePatchVersion: GamePatchVersion;
+  templateId: TacticTemplateId;
+  templateVersion: TacticTemplateVersion;
+  configHash: TacticConfigHash;
+  validation: TacticCompatibility;
 };
 
 export type TacticRecommendation = {
+  metadata: TacticRecommendationMetadata;
   matchedRule: string;
   title: string;
-  formation: string;
+  formation: FormationCandidate;
   teamTactics: TeamTactics;
   playerInstructions: PlayerInstruction[];
   explanation: string;

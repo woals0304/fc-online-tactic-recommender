@@ -1,21 +1,37 @@
+import { createHash } from "node:crypto";
+
 import type {
+  AttackingStyle,
+  DefensiveStyle,
+  FormationCandidate,
   ParticipationLevel,
   PersonalTacticSetting,
+  PlayerInstruction,
+  PlayerPosition,
   PlayStyleAnalysis,
   PlayStyleLabel,
+  Scale10,
+  Scale5,
   TacticRecommendation,
   TacticRecommendationSet,
+  TacticConfigHash,
+  TacticTemplateId,
+  TeamMentality,
   TeamTactics,
 } from "../fconline/types";
+import {
+  assertValidTacticRecommendation,
+  assertValidTacticRecommendationSet,
+  FORMATION_CANDIDATES,
+  GAME_PATCH_VERSION,
+  TACTIC_SCHEMA_VERSION,
+  TACTIC_TEMPLATE_VERSION,
+} from "./tacticSchema";
 
-type TacticRuleId =
-  | "risk-possession"
-  | "risk-counter"
-  | "attack-possession"
-  | "attack-and-shoot"
-  | "possession-scoring"
-  | "possession-focused"
-  | "defense-risk";
+type TacticRuleId = Exclude<
+  TacticTemplateId,
+  "balanced" | "compact-possession-alternative"
+>;
 
 type TacticRule = {
   id: TacticRuleId;
@@ -25,17 +41,27 @@ type TacticRule = {
 };
 
 type PlayStyleScores = Record<PlayStyleLabel, number>;
-type TacticPlan = Omit<TacticRecommendation, "matchedRule">;
+type TacticPlan = Omit<TacticRecommendation, "metadata" | "matchedRule">;
 
-export const FORMATION_CANDIDATES = [
-  "4-2-2-2",
-  "4-3-2-1",
-  "4-3-3 홀딩",
-  "4-1-4-1",
-  "5-2-3",
-  "4-4-2",
-  "4-2-3-1",
-] as const;
+type TacticConfiguration = Pick<
+  TacticRecommendation,
+  "formation" | "teamTactics" | "playerInstructions"
+>;
+
+type TeamTacticsInput = {
+  teamMentality: TeamMentality;
+  defensiveStyle: DefensiveStyle;
+  defensiveWidth: Scale10;
+  defensiveDepth: Scale10;
+  buildUpPlay: AttackingStyle;
+  chanceCreation: AttackingStyle;
+  attackingWidth: Scale10;
+  playersInBox: Scale10;
+  corners: Scale5;
+  freeKicks: Scale5;
+};
+
+export { FORMATION_CANDIDATES };
 
 export const TACTIC_RULE_THRESHOLDS = {
   attackAndShoot: {
@@ -130,19 +156,18 @@ export function recommendTactic(analysis: PlayStyleAnalysis): TacticRecommendati
   const primaryRule = TACTIC_RULES.find((rule) => rule.matches(scores));
   const primary = primaryRule
     ? createRecommendationFromRule(primaryRule, scores)
-    : createRecommendation("기본 밸런스", createBalancedRecommendation(scores));
+    : createRecommendation("balanced", "기본 밸런스", createBalancedRecommendation(scores));
   const alternative = getAlternativeRecommendation(scores, primaryRule?.id, primary.formation);
+  const recommendationSet = { primary, alternative };
 
-  return {
-    primary,
-    alternative,
-  };
+  assertValidTacticRecommendationSet(recommendationSet);
+  return recommendationSet;
 }
 
 function getAlternativeRecommendation(
   scores: PlayStyleScores,
   primaryRuleId: TacticRuleId | undefined,
-  primaryFormation: string,
+  primaryFormation: FormationCandidate,
 ) {
   for (const rule of TACTIC_RULES) {
     if (rule.id === primaryRuleId || !rule.matches(scores)) {
@@ -157,32 +182,49 @@ function getAlternativeRecommendation(
   }
 
   if (primaryRuleId) {
-    const balanced = createRecommendation("기본 밸런스", createBalancedRecommendation(scores));
+    const balanced = createRecommendation(
+      "balanced",
+      "기본 밸런스",
+      createBalancedRecommendation(scores),
+    );
 
     if (balanced.formation !== primaryFormation) {
       return balanced;
     }
-
-    return createRecommendation("안정 점유 대안", createCompactPossessionAlternative(scores));
   }
 
-  return createRecommendation("안정 점유 대안", createCompactPossessionAlternative(scores));
+  return createRecommendation(
+    "compact-possession-alternative",
+    "안정 점유 대안",
+    createCompactPossessionAlternative(scores),
+  );
 }
 
 function createRiskPossessionRecommendation(scores: PlayStyleScores): TacticPlan {
   return {
     title: "수비 보정 점유",
     formation: "4-1-4-1",
-    teamTactics: teamTactics("수비적", "밸런스", 44, 43, "느린 빌드업", 52, 4, 2, 2),
+    teamTactics: teamTactics({
+      teamMentality: "수비적",
+      defensiveStyle: "밸런스",
+      defensiveWidth: 4,
+      defensiveDepth: 4,
+      buildUpPlay: "짧은 패스",
+      chanceCreation: "짧은 패스",
+      attackingWidth: 5,
+      playersInBox: 4,
+      corners: 2,
+      freeKicks: 2,
+    }),
     playerInstructions: [
-      instruction("ST", "연계형 원톱", tactics(["공격 지원", "균형 잡힌 공격"], ["위치 선정", "중앙에 위치"]), 2, 2),
-      instruction("LM/RM", "수비 가담 윙어", tactics(["수비 지원", "수비 가담"], ["지원 움직임", "측면 대기"]), 2, 3),
-      instruction("CM 1", "전진 연결", tactics(["공격 지원", "균형 잡힌 공격"], ["박스 지원", "패스 길 열기"]), 2, 2),
-      instruction("CM 2", "박스 보호", tactics(["공격 지원", "공격 시 후방 대기"], ["수비 위치", "센터 커버"]), 1, 3),
-      instruction("CDM", "전담 홀딩", tactics(["공격 지원", "공격 시 후방 대기"], ["수비 위치", "센터 커버"]), 1, 3),
-      instruction("LB/RB", "안정 풀백", tactics(["공격 지원", "공격 시 후방 대기"], ["공격 위치", "오버랩 자제"]), 1, 3),
+      instruction(["ST"], "연계형 원톱", tactics(["공격 지원", "균형 잡힌 공격"], ["위치 선정", "중앙에 위치"]), 2, 2),
+      instruction(["LM", "RM"], "수비 가담 윙어", tactics(["수비 지원", "수비 가담"], ["지원 움직임", "측면 대기"]), 2, 3),
+      instruction(["LCM"], "전진 연결", tactics(["공격 지원", "균형 잡힌 공격"], ["박스 지원", "패스 길 열기"]), 2, 2),
+      instruction(["RCM"], "박스 보호", tactics(["공격 지원", "공격 시 후방 대기"], ["수비 위치", "센터 커버"]), 1, 3),
+      instruction(["CDM"], "전담 홀딩", tactics(["공격 지원", "공격 시 후방 대기"], ["수비 위치", "센터 커버"]), 1, 3),
+      instruction(["LB", "RB"], "안정 풀백", tactics(["공격 지원", "공격 시 후방 대기"], ["공격 위치", "오버랩 자제"]), 1, 3),
     ],
-    explanation: `수비 불안 ${scores["수비 불안"]}점과 점유율 지향 ${scores["점유율 지향"]}점이 함께 높아 무리한 압박보다 4-1-4-1로 중앙을 한 겹 더 막습니다. 수비 깊이 43과 박스 안쪽 선수 4명은 역습 공간을 줄이면서도 짧은 점유 전개를 이어가기 위한 보정값입니다.`,
+    explanation: `수비 불안 ${scores["수비 불안"]}점과 점유율 지향 ${scores["점유율 지향"]}점이 함께 높아 4-1-4-1로 중앙을 한 겹 더 보호합니다. 수비 깊이 4와 짧은 패스 전개는 뒷공간 노출을 억제하면서 안전한 연결을 늘리도록 설계했습니다.`,
   };
 }
 
@@ -190,16 +232,27 @@ function createRiskCounterRecommendation(scores: PlayStyleScores): TacticPlan {
   return {
     title: "수비 보정 역습",
     formation: "5-2-3",
-    teamTactics: teamTactics("수비적", "후퇴", 42, 38, "빠른 빌드업", 58, 5, 2, 2),
+    teamTactics: teamTactics({
+      teamMentality: "수비적",
+      defensiveStyle: "후퇴",
+      defensiveWidth: 4,
+      defensiveDepth: 3,
+      buildUpPlay: "빠른 빌드업",
+      chanceCreation: "긴 패스",
+      attackingWidth: 7,
+      playersInBox: 5,
+      corners: 2,
+      freeKicks: 2,
+    }),
     playerInstructions: [
-      instruction("ST", "침투형 원톱", tactics(["공격 지원", "뒤에서 침투"], ["위치 선정", "중앙에 위치"]), 3, 2),
-      instruction("LW/RW", "역습 윙어", tactics(["침투 지원", "뒤에서 침투"], ["지원 움직임", "측면 대기"]), 3, 2),
-      instruction("CM 1", "수비 보호", tactics(["공격 지원", "공격 시 후방 대기"], ["수비 위치", "센터 커버"]), 1, 3),
-      instruction("CM 2", "전환 패서", tactics(["공격 지원", "균형 잡힌 공격"], ["수비 위치", "센터 커버"]), 2, 2),
-      instruction("LWB/RWB", "왕복 윙백", tactics(["공격 지원", "균형 잡힌 공격"], ["공격 위치", "오버랩"]), 2, 3),
-      instruction("CB 3명", "박스 수비", tactics(["공격 지원", "기본 위치 유지"], ["수비 위치", "중앙 유지"]), 1, 3),
+      instruction(["ST"], "침투형 원톱", tactics(["공격 지원", "뒤에서 침투"], ["위치 선정", "중앙에 위치"]), 3, 2),
+      instruction(["LW", "RW"], "역습 윙어", tactics(["침투 지원", "뒤에서 침투"], ["지원 움직임", "측면 대기"]), 3, 2),
+      instruction(["LCM"], "수비 보호", tactics(["공격 지원", "공격 시 후방 대기"], ["수비 위치", "센터 커버"]), 1, 3),
+      instruction(["RCM"], "전환 패서", tactics(["공격 지원", "균형 잡힌 공격"], ["수비 위치", "센터 커버"]), 2, 2),
+      instruction(["LWB", "RWB"], "왕복 윙백", tactics(["공격 지원", "균형 잡힌 공격"], ["공격 위치", "오버랩"]), 2, 3),
+      instruction(["LCB", "CB", "RCB"], "박스 수비", tactics(["공격 지원", "기본 위치 유지"], ["수비 위치", "중앙 유지"]), 1, 3),
     ],
-    explanation: `수비 불안 ${scores["수비 불안"]}점인데 공격적 ${scores["공격적"]}점도 높아 5-2-3을 추천합니다. 수비 깊이 38로 뒷공간을 줄이고, 빠른 빌드업으로 공을 뺏은 뒤 세 명의 전방 자원에게 빠르게 연결하는 체감에 맞춘 전술입니다.`,
+    explanation: `수비 불안 ${scores["수비 불안"]}점인데 공격적 ${scores["공격적"]}점도 높아 5-2-3을 추천합니다. 수비 깊이 3으로 뒷공간을 줄이고, 빠른 빌드업과 긴 패스 기회 창출로 전방 세 명에게 빠르게 연결합니다.`,
   };
 }
 
@@ -207,16 +260,27 @@ function createAttackPossessionRecommendation(scores: PlayStyleScores): TacticPl
   return {
     title: "공격 점유 압박",
     formation: "4-3-2-1",
-    teamTactics: teamTactics("공격적", "전방 압박", 50, 58, "밸런스", 48, 6, 3, 2),
+    teamTactics: teamTactics({
+      teamMentality: "공격적",
+      defensiveStyle: "공 뺏긴 직후 압박",
+      defensiveWidth: 5,
+      defensiveDepth: 7,
+      buildUpPlay: "짧은 패스",
+      chanceCreation: "짧은 패스",
+      attackingWidth: 5,
+      playersInBox: 6,
+      corners: 3,
+      freeKicks: 2,
+    }),
     playerInstructions: [
-      instruction("ST", "침투형 원톱", tactics(["공격 지원", "뒤에서 침투"], ["위치 선정", "중앙에 위치"]), 3, 2),
-      instruction("LF/RF", "하프스페이스 공격수", tactics(["지원 움직임", "안쪽으로 파고들기"], ["침투 지원", "뒤에서 침투"]), 3, 2),
-      instruction("CM 1", "전진 지원", tactics(["공격 지원", "공격 가담"], ["박스 지원", "패스 길 열기"]), 3, 2),
-      instruction("CM 2", "균형 연결", tactics(["공격 지원", "균형 잡힌 공격"], ["수비 위치", "센터 커버"]), 2, 2),
-      instruction("CM 3", "수비 보험", tactics(["공격 지원", "공격 시 후방 대기"], ["수비 위치", "센터 커버"]), 1, 3),
-      instruction("LB/RB", "균형 풀백", tactics(["공격 지원", "균형 잡힌 공격"], ["공격 위치", "오버랩 자제"]), 2, 2),
+      instruction(["ST"], "침투형 원톱", tactics(["공격 지원", "뒤에서 침투"], ["위치 선정", "중앙에 위치"]), 3, 2),
+      instruction(["LF", "RF"], "하프스페이스 공격수", tactics(["지원 움직임", "안쪽으로 파고들기"], ["침투 지원", "뒤에서 침투"]), 3, 2),
+      instruction(["LCM"], "전진 지원", tactics(["공격 지원", "공격 가담"], ["박스 지원", "패스 길 열기"]), 3, 2),
+      instruction(["CM"], "균형 연결", tactics(["공격 지원", "균형 잡힌 공격"], ["수비 위치", "센터 커버"]), 2, 2),
+      instruction(["RCM"], "수비 보험", tactics(["공격 지원", "공격 시 후방 대기"], ["수비 위치", "센터 커버"]), 1, 3),
+      instruction(["LB", "RB"], "균형 풀백", tactics(["공격 지원", "균형 잡힌 공격"], ["공격 위치", "오버랩 자제"]), 2, 2),
     ],
-    explanation: `공격적 ${scores["공격적"]}점과 점유율 지향 ${scores["점유율 지향"]}점이 높고 수비 불안 ${scores["수비 불안"]}점은 위험선 아래라 4-3-2-1을 씁니다. 중앙과 하프스페이스에 선수를 몰아 짧은 패스 후 침투 각을 만들고, 수비 깊이 58로 지나친 뒷공간 노출은 피합니다.`,
+    explanation: `공격적 ${scores["공격적"]}점과 점유율 지향 ${scores["점유율 지향"]}점이 높고 수비 불안 ${scores["수비 불안"]}점은 위험선 아래입니다. 깊이 7의 즉시 압박과 두 구간의 짧은 패스로 중앙·하프스페이스 점유를 이어갑니다.`,
   };
 }
 
@@ -224,16 +288,27 @@ function createAttackAndShootRecommendation(scores: PlayStyleScores): TacticPlan
   return {
     title: "투톱 슈팅 강화",
     formation: "4-2-2-2",
-    teamTactics: teamTactics("공격적", "전방 압박", 52, 56, "빠른 빌드업", 54, 7, 3, 3),
+    teamTactics: teamTactics({
+      teamMentality: "공격적",
+      defensiveStyle: "공 뺏긴 직후 압박",
+      defensiveWidth: 6,
+      defensiveDepth: 7,
+      buildUpPlay: "빠른 빌드업",
+      chanceCreation: "빠른 빌드업",
+      attackingWidth: 6,
+      playersInBox: 7,
+      corners: 3,
+      freeKicks: 3,
+    }),
     playerInstructions: [
-      instruction("ST 1", "침투형 공격수", tactics(["공격 지원", "뒤에서 침투"], ["위치 선정", "중앙에 위치"]), 3, 2),
-      instruction("ST 2", "연계형 공격수", tactics(["공격 지원", "균형 잡힌 공격"], ["위치 선정", "중앙에 위치"]), 3, 2),
-      instruction("LAM/RAM", "중앙 침투 2선", tactics(["지원 움직임", "안쪽으로 파고들기"], ["침투 지원", "뒤에서 침투"]), 3, 2),
-      instruction("CDM 1", "수비 보호", tactics(["공격 지원", "공격 시 후방 대기"], ["수비 위치", "센터 커버"]), 1, 3),
-      instruction("CDM 2", "전개 지원", tactics(["공격 지원", "균형 잡힌 공격"], ["수비 위치", "센터 커버"]), 2, 2),
-      instruction("LB/RB", "균형 풀백", tactics(["공격 지원", "균형 잡힌 공격"], ["공격 위치", "오버랩 자제"]), 2, 2),
+      instruction(["LS"], "침투형 공격수", tactics(["공격 지원", "뒤에서 침투"], ["위치 선정", "중앙에 위치"]), 3, 2),
+      instruction(["RS"], "연계형 공격수", tactics(["공격 지원", "균형 잡힌 공격"], ["위치 선정", "중앙에 위치"]), 3, 2),
+      instruction(["LAM", "RAM"], "중앙 침투 2선", tactics(["지원 움직임", "안쪽으로 파고들기"], ["침투 지원", "뒤에서 침투"]), 3, 2),
+      instruction(["LDM"], "수비 보호", tactics(["공격 지원", "공격 시 후방 대기"], ["수비 위치", "센터 커버"]), 1, 3),
+      instruction(["RDM"], "전개 지원", tactics(["공격 지원", "균형 잡힌 공격"], ["수비 위치", "센터 커버"]), 2, 2),
+      instruction(["LB", "RB"], "균형 풀백", tactics(["공격 지원", "균형 잡힌 공격"], ["공격 위치", "오버랩 자제"]), 2, 2),
     ],
-    explanation: `공격적 ${scores["공격적"]}점, 슈팅 빈도 높음 ${scores["슈팅 빈도 높음"]}점이 강해 4-2-2-2로 박스 주변 슈팅 루트를 늘립니다. 박스 안쪽 선수 7명과 빠른 빌드업은 세컨볼과 컷백 각을 늘리기 위한 값이고, 수비 깊이는 56으로 과한 전방 압박을 피했습니다.`,
+    explanation: `공격적 ${scores["공격적"]}점과 슈팅 빈도 높음 ${scores["슈팅 빈도 높음"]}점이 강해 4-2-2-2로 박스 주변 슈팅 루트를 늘립니다. 빠른 빌드업과 크로스 시 박스 진입 성향 7은 두 공격수와 2선의 마무리 참여를 강조합니다.`,
   };
 }
 
@@ -241,16 +316,27 @@ function createPossessionScoringRecommendation(scores: PlayStyleScores): TacticP
   return {
     title: "점유 득점 유지",
     formation: "4-3-3 홀딩",
-    teamTactics: teamTactics("보통", "밸런스", 48, 52, "느린 빌드업", 56, 5, 2, 2),
+    teamTactics: teamTactics({
+      teamMentality: "보통",
+      defensiveStyle: "밸런스",
+      defensiveWidth: 5,
+      defensiveDepth: 5,
+      buildUpPlay: "짧은 패스",
+      chanceCreation: "밸런스",
+      attackingWidth: 6,
+      playersInBox: 5,
+      corners: 2,
+      freeKicks: 2,
+    }),
     playerInstructions: [
-      instruction("ST", "연계 마무리", tactics(["공격 지원", "균형 잡힌 공격"], ["위치 선정", "중앙에 위치"]), 3, 2),
-      instruction("LW/RW", "폭 유지 윙어", tactics(["지원 움직임", "측면 대기"], ["공격 지원", "짧은 패스 지원"]), 2, 2),
-      instruction("CM 1", "침투 미드필더", tactics(["공격 지원", "공격 가담"], ["박스 지원", "페널티 박스 안으로 침투"]), 3, 2),
-      instruction("CM 2", "전개 미드필더", tactics(["공격 지원", "균형 잡힌 공격"], ["박스 지원", "패스 길 열기"]), 2, 2),
-      instruction("CDM", "후방 조율", tactics(["공격 지원", "공격 시 후방 대기"], ["수비 위치", "센터 커버"]), 1, 3),
-      instruction("LB/RB", "지원 풀백", tactics(["공격 지원", "균형 잡힌 공격"], ["공격 위치", "오버랩 자제"]), 2, 2),
+      instruction(["ST"], "연계 마무리", tactics(["공격 지원", "균형 잡힌 공격"], ["위치 선정", "중앙에 위치"]), 3, 2),
+      instruction(["LW", "RW"], "폭 유지 윙어", tactics(["지원 움직임", "측면 대기"], ["공격 지원", "짧은 패스 지원"]), 2, 2),
+      instruction(["LCM"], "침투 미드필더", tactics(["공격 지원", "공격 가담"], ["박스 지원", "페널티 박스 안으로 침투"]), 3, 2),
+      instruction(["RCM"], "전개 미드필더", tactics(["공격 지원", "균형 잡힌 공격"], ["박스 지원", "패스 길 열기"]), 2, 2),
+      instruction(["CDM"], "후방 조율", tactics(["공격 지원", "공격 시 후방 대기"], ["수비 위치", "센터 커버"]), 1, 3),
+      instruction(["LB", "RB"], "지원 풀백", tactics(["공격 지원", "균형 잡힌 공격"], ["공격 위치", "오버랩 자제"]), 2, 2),
     ],
-    explanation: `점유율 지향 ${scores["점유율 지향"]}점과 득점력 높음 ${scores["득점력 높음"]}점이 함께 높아 4-3-3 홀딩으로 점유 구조를 유지합니다. 느린 빌드업으로 공 소유 시간을 살리고, 박스 안쪽 선수 5명으로 이미 좋은 마무리 성향이 박스 근처에서 끊기지 않게 했습니다.`,
+    explanation: `점유율 지향 ${scores["점유율 지향"]}점과 득점력 높음 ${scores["득점력 높음"]}점이 함께 높습니다. 수비 지역에서는 짧은 패스로 구조를 유지하고 공격 지역에서는 밸런스로 이미 좋은 마무리 선택을 제한하지 않습니다.`,
   };
 }
 
@@ -258,16 +344,27 @@ function createPossessionRecommendation(scores: PlayStyleScores): TacticPlan {
   return {
     title: "점유 전개 유지",
     formation: "4-3-3 홀딩",
-    teamTactics: teamTactics("보통", "밸런스", 50, 50, "느린 빌드업", 55, 5, 2, 2),
+    teamTactics: teamTactics({
+      teamMentality: "보통",
+      defensiveStyle: "밸런스",
+      defensiveWidth: 5,
+      defensiveDepth: 5,
+      buildUpPlay: "짧은 패스",
+      chanceCreation: "짧은 패스",
+      attackingWidth: 6,
+      playersInBox: 5,
+      corners: 2,
+      freeKicks: 2,
+    }),
     playerInstructions: [
-      instruction("ST", "연계형 스트라이커", tactics(["공격 지원", "타겟맨"], ["위치 선정", "중앙에 위치"]), 2, 2),
-      instruction("LW/RW", "폭 유지 윙어", tactics(["지원 움직임", "측면 대기"], ["공격 지원", "짧은 패스 지원"]), 2, 2),
-      instruction("CM 1", "전진 패서", tactics(["공격 지원", "공격 가담"], ["박스 지원", "패스 길 열기"]), 3, 2),
-      instruction("CM 2", "밸런스 미드필더", tactics(["공격 지원", "균형 잡힌 공격"], ["수비 위치", "센터 커버"]), 2, 2),
-      instruction("CDM", "홀딩 미드필더", tactics(["공격 지원", "공격 시 후방 대기"], ["수비 위치", "센터 커버"]), 1, 3),
-      instruction("LB/RB", "지원 풀백", tactics(["공격 지원", "균형 잡힌 공격"], ["공격 위치", "중앙 지원"]), 2, 2),
+      instruction(["ST"], "연계형 스트라이커", tactics(["공격 지원", "타겟맨"], ["위치 선정", "중앙에 위치"]), 2, 2),
+      instruction(["LW", "RW"], "폭 유지 윙어", tactics(["지원 움직임", "측면 대기"], ["공격 지원", "짧은 패스 지원"]), 2, 2),
+      instruction(["LCM"], "전진 패서", tactics(["공격 지원", "공격 가담"], ["박스 지원", "패스 길 열기"]), 3, 2),
+      instruction(["RCM"], "밸런스 미드필더", tactics(["공격 지원", "균형 잡힌 공격"], ["수비 위치", "센터 커버"]), 2, 2),
+      instruction(["CDM"], "홀딩 미드필더", tactics(["공격 지원", "공격 시 후방 대기"], ["수비 위치", "센터 커버"]), 1, 3),
+      instruction(["LB", "RB"], "지원 풀백", tactics(["공격 지원", "균형 잡힌 공격"], ["공격 위치", "중앙 지원"]), 2, 2),
     ],
-    explanation: `점유율 지향 ${scores["점유율 지향"]}점이 높아 공을 오래 소유하는 전개가 어울립니다. 4-3-3 홀딩은 CDM이 역습을 막고 CM 두 명이 패스 선택지를 만들어 주기 쉬워, 느린 빌드업과 보통 팀 성향의 체감이 잘 살아납니다.`,
+    explanation: `점유율 지향 ${scores["점유율 지향"]}점이 높아 4-3-3 홀딩을 추천합니다. 두 구간 모두 짧은 패스를 사용하고 폭 6으로 중앙 패스가 막힐 때 측면 선택지도 남깁니다.`,
   };
 }
 
@@ -275,16 +372,27 @@ function createDefenseStabilityRecommendation(scores: PlayStyleScores): TacticPl
   return {
     title: "수비 안정 우선",
     formation: "4-1-4-1",
-    teamTactics: teamTactics("수비적", "밸런스", 44, 40, "밸런스", 50, 4, 2, 1),
+    teamTactics: teamTactics({
+      teamMentality: "수비적",
+      defensiveStyle: "후퇴",
+      defensiveWidth: 4,
+      defensiveDepth: 3,
+      buildUpPlay: "밸런스",
+      chanceCreation: "밸런스",
+      attackingWidth: 5,
+      playersInBox: 4,
+      corners: 2,
+      freeKicks: 1,
+    }),
     playerInstructions: [
-      instruction("ST", "원톱", tactics(["공격 지원", "균형 잡힌 공격"], ["위치 선정", "중앙에 위치"]), 2, 2),
-      instruction("LM/RM", "수비 지원", tactics(["수비 지원", "수비 가담"], ["지원 움직임", "측면 대기"]), 2, 3),
-      instruction("CM 1", "연결형 미드필더", tactics(["공격 지원", "균형 잡힌 공격"], ["수비 위치", "센터 커버"]), 2, 2),
-      instruction("CM 2", "수비 보조", tactics(["공격 지원", "공격 시 후방 대기"], ["수비 위치", "센터 커버"]), 1, 3),
-      instruction("CDM", "전담 홀딩", tactics(["공격 지원", "공격 시 후방 대기"], ["수비 위치", "센터 커버"]), 1, 3),
-      instruction("LB/RB", "풀백", tactics(["공격 지원", "공격 시 후방 대기"], ["공격 위치", "오버랩 자제"]), 1, 3),
+      instruction(["ST"], "원톱", tactics(["공격 지원", "균형 잡힌 공격"], ["위치 선정", "중앙에 위치"]), 2, 2),
+      instruction(["LM", "RM"], "수비 지원", tactics(["수비 지원", "수비 가담"], ["지원 움직임", "측면 대기"]), 2, 3),
+      instruction(["LCM"], "연결형 미드필더", tactics(["공격 지원", "균형 잡힌 공격"], ["수비 위치", "센터 커버"]), 2, 2),
+      instruction(["RCM"], "수비 보조", tactics(["공격 지원", "공격 시 후방 대기"], ["수비 위치", "센터 커버"]), 1, 3),
+      instruction(["CDM"], "전담 홀딩", tactics(["공격 지원", "공격 시 후방 대기"], ["수비 위치", "센터 커버"]), 1, 3),
+      instruction(["LB", "RB"], "풀백", tactics(["공격 지원", "공격 시 후방 대기"], ["공격 위치", "오버랩 자제"]), 1, 3),
     ],
-    explanation: `수비 불안 ${scores["수비 불안"]}점이 단독으로 높아 중앙 보호와 라인 안정이 우선입니다. 4-1-4-1, 수비 깊이 40, 프리킥 1은 세트피스와 역습 때 남는 선수를 늘려 실점 리스크를 줄이기 위한 보수 설정입니다.`,
+    explanation: `수비 불안 ${scores["수비 불안"]}점이 단독으로 높아 중앙 보호와 라인 안정이 우선입니다. 후퇴, 깊이 3, 크로스 시 박스 진입 성향 4와 프리킥 1로 공격 전환 때도 후방에 더 많은 선수를 남깁니다.`,
   };
 }
 
@@ -292,16 +400,27 @@ function createBalancedRecommendation(scores: PlayStyleScores): TacticPlan {
   return {
     title: "기본 밸런스",
     formation: "4-4-2",
-    teamTactics: teamTactics("보통", "밸런스", 50, 50, "밸런스", 50, 5, 2, 2),
+    teamTactics: teamTactics({
+      teamMentality: "보통",
+      defensiveStyle: "밸런스",
+      defensiveWidth: 5,
+      defensiveDepth: 5,
+      buildUpPlay: "밸런스",
+      chanceCreation: "밸런스",
+      attackingWidth: 5,
+      playersInBox: 5,
+      corners: 2,
+      freeKicks: 2,
+    }),
     playerInstructions: [
-      instruction("ST 1", "침투형 공격수", tactics(["공격 지원", "뒤에서 침투"], ["위치 선정", "중앙에 위치"]), 3, 2),
-      instruction("ST 2", "연계형 공격수", tactics(["공격 지원", "균형 잡힌 공격"], ["위치 선정", "중앙에 위치"]), 2, 2),
-      instruction("LM/RM", "측면 미드필더", tactics(["수비 지원", "수비 가담"], ["지원 움직임", "측면 대기"]), 2, 3),
-      instruction("CM 1", "수비 지원", tactics(["공격 지원", "공격 시 후방 대기"], ["수비 위치", "센터 커버"]), 1, 3),
-      instruction("CM 2", "밸런스 연결", tactics(["공격 지원", "균형 잡힌 공격"], ["수비 위치", "센터 커버"]), 2, 2),
-      instruction("LB/RB", "균형 풀백", tactics(["공격 지원", "균형 잡힌 공격"], ["공격 위치", "오버랩 자제"]), 2, 2),
+      instruction(["LS"], "침투형 공격수", tactics(["공격 지원", "뒤에서 침투"], ["위치 선정", "중앙에 위치"]), 3, 2),
+      instruction(["RS"], "연계형 공격수", tactics(["공격 지원", "균형 잡힌 공격"], ["위치 선정", "중앙에 위치"]), 2, 2),
+      instruction(["LM", "RM"], "측면 미드필더", tactics(["수비 지원", "수비 가담"], ["지원 움직임", "측면 대기"]), 2, 3),
+      instruction(["LCM"], "수비 지원", tactics(["공격 지원", "공격 시 후방 대기"], ["수비 위치", "센터 커버"]), 1, 3),
+      instruction(["RCM"], "밸런스 연결", tactics(["공격 지원", "균형 잡힌 공격"], ["수비 위치", "센터 커버"]), 2, 2),
+      instruction(["LB", "RB"], "균형 풀백", tactics(["공격 지원", "균형 잡힌 공격"], ["공격 위치", "오버랩 자제"]), 2, 2),
     ],
-    explanation: `공격적 ${scores["공격적"]}점, 점유율 지향 ${scores["점유율 지향"]}점, 수비 불안 ${scores["수비 불안"]}점을 함께 보면 한쪽으로 크게 치우치지 않습니다. 4-4-2는 두 줄 수비와 투톱 전개가 모두 가능해 성향 데이터가 애매할 때 체감 리스크가 낮은 기본값입니다.`,
+    explanation: `공격적 ${scores["공격적"]}점, 점유율 지향 ${scores["점유율 지향"]}점, 수비 불안 ${scores["수비 불안"]}점이 한쪽으로 크게 치우치지 않습니다. 모든 팀 전술 축을 중앙값에 두어 사용자 체감 검증의 기준선으로 사용합니다.`,
   };
 }
 
@@ -309,78 +428,131 @@ function createCompactPossessionAlternative(scores: PlayStyleScores): TacticPlan
   return {
     title: "안정 점유 대안",
     formation: "4-2-3-1",
-    teamTactics: teamTactics("보통", "밸런스", 48, 48, "느린 빌드업", 52, 4, 2, 2),
+    teamTactics: teamTactics({
+      teamMentality: "보통",
+      defensiveStyle: "밸런스",
+      defensiveWidth: 4,
+      defensiveDepth: 4,
+      buildUpPlay: "짧은 패스",
+      chanceCreation: "짧은 패스",
+      attackingWidth: 5,
+      playersInBox: 4,
+      corners: 2,
+      freeKicks: 2,
+    }),
     playerInstructions: [
-      instruction("ST", "연계형 원톱", tactics(["공격 지원", "균형 잡힌 공격"], ["위치 선정", "중앙에 위치"]), 2, 2),
-      instruction("CAM", "연결형 2선", tactics(["위치 선정", "자유 역할"], ["공격 지원", "전방 대기"]), 3, 2),
-      instruction("LAM/RAM", "지원형 윙어", tactics(["공격 지원", "짧은 패스 지원"], ["수비 지원", "수비 가담"]), 2, 3),
-      instruction("CDM 2명", "후방 보호", tactics(["공격 지원", "공격 시 후방 대기"], ["수비 위치", "센터 커버"]), 1, 3),
-      instruction("LB/RB", "안정 풀백", tactics(["공격 지원", "공격 시 후방 대기"], ["공격 위치", "오버랩 자제"]), 1, 3),
+      instruction(["ST"], "연계형 원톱", tactics(["공격 지원", "균형 잡힌 공격"], ["위치 선정", "중앙에 위치"]), 2, 2),
+      instruction(["CAM"], "연결형 2선", tactics(["위치 선정", "자유 역할"], ["공격 지원", "전방 대기"]), 3, 2),
+      instruction(["LAM", "RAM"], "지원형 윙어", tactics(["공격 지원", "짧은 패스 지원"], ["수비 지원", "수비 가담"]), 2, 3),
+      instruction(["LDM", "RDM"], "후방 보호", tactics(["공격 지원", "공격 시 후방 대기"], ["수비 위치", "센터 커버"]), 1, 3),
+      instruction(["LB", "RB"], "안정 풀백", tactics(["공격 지원", "공격 시 후방 대기"], ["공격 위치", "오버랩 자제"]), 1, 3),
     ],
-    explanation: `뚜렷한 주성향이 약할 때 사용할 수 있는 보조 전술입니다. 점유율 지향 ${scores["점유율 지향"]}점과 수비 불안 ${scores["수비 불안"]}점을 고려해 4-2-3-1의 더블 볼란치로 후방 안정과 짧은 연결을 우선합니다.`,
+    explanation: `뚜렷한 주성향이 약할 때 사용하는 보조 전술입니다. 점유율 지향 ${scores["점유율 지향"]}점과 수비 불안 ${scores["수비 불안"]}점을 고려해 폭과 깊이를 4로 좁히고 더블 볼란치 앞에서 짧게 연결합니다.`,
   };
 }
 
-function teamTactics(
-  teamMentality: string,
-  defensiveStyle: string,
-  defensiveWidth: number,
-  defensiveDepth: number,
-  buildUpPlay: string,
-  attackingWidth: number,
-  playersInBox: number,
-  corners: number,
-  freeKicks: number,
-): TeamTactics {
+function teamTactics(input: TeamTacticsInput): TeamTactics {
   return {
-    teamMentality,
+    schemaVersion: TACTIC_SCHEMA_VERSION,
+    teamMentality: input.teamMentality,
     defensiveTactics: {
-      defensiveStyle,
-      width: defensiveWidth,
-      depth: defensiveDepth,
+      defensiveStyle: input.defensiveStyle,
+      width: input.defensiveWidth,
+      depth: input.defensiveDepth,
     },
     offensiveTactics: {
-      buildUpPlay,
-      width: attackingWidth,
-      playersInBox,
-      corners,
-      freeKicks,
+      buildUpPlay: input.buildUpPlay,
+      chanceCreation: input.chanceCreation,
+      width: input.attackingWidth,
+      playersInBox: input.playersInBox,
+      corners: input.corners,
+      freeKicks: input.freeKicks,
     },
   };
 }
 
 function instruction(
-  position: string,
-  role: string,
-  personalTactics: PersonalTacticSetting[],
+  positions: readonly PlayerPosition[],
+  roleDescription: string,
+  uiSettings: PersonalTacticSetting[],
   attackParticipation: ParticipationLevel,
   defenseParticipation: ParticipationLevel,
-) {
+): PlayerInstruction {
   return {
-    position,
-    role,
-    personalTactics,
-    attackParticipation,
-    defenseParticipation,
+    positions: [...positions],
+    roleDescription,
+    uiSettings,
+    attackParticipation: participation(attackParticipation),
+    defenseParticipation: participation(defenseParticipation),
   };
 }
 
 function tactics(...items: Array<[string, string]>): PersonalTacticSetting[] {
-  return items.map(([menu, value]) => ({ menu, value }));
+  return items.map(([group, value]) => ({ group, value, confirmed: false }));
+}
+
+function participation(value: ParticipationLevel) {
+  return { value, confirmed: false } as const;
 }
 
 function createRecommendationFromRule(
   rule: TacticRule,
   scores: PlayStyleScores,
 ): TacticRecommendation {
-  return createRecommendation(rule.name, rule.recommend(scores));
+  return createRecommendation(rule.id, rule.name, rule.recommend(scores));
 }
 
-function createRecommendation(matchedRule: string, plan: TacticPlan): TacticRecommendation {
-  return {
+function createRecommendation(
+  templateId: TacticTemplateId,
+  matchedRule: string,
+  plan: TacticPlan,
+): TacticRecommendation {
+  const configHash = calculateTacticConfigHash(plan);
+  const recommendation: TacticRecommendation = {
+    metadata: {
+      schemaVersion: TACTIC_SCHEMA_VERSION,
+      gamePatchVersion: GAME_PATCH_VERSION,
+      templateId,
+      templateVersion: TACTIC_TEMPLATE_VERSION,
+      configHash,
+      validation: {
+        overall: "partial",
+        teamTactics: "confirmed",
+        formation: "unconfirmed",
+        personalTactics: "unconfirmed",
+      },
+    },
     matchedRule,
     ...plan,
   };
+
+  assertValidTacticRecommendation(recommendation);
+  return recommendation;
+}
+
+export function calculateTacticConfigHash(config: TacticConfiguration): TacticConfigHash {
+  const hashInput: TacticConfiguration = {
+    formation: config.formation,
+    teamTactics: config.teamTactics,
+    playerInstructions: config.playerInstructions,
+  };
+  const digest = createHash("sha256").update(stableStringify(hashInput), "utf8").digest("hex");
+  return `sha256:${digest}`;
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(",")}]`;
+  }
+
+  if (value !== null && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+      .map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`);
+    return `{${entries.join(",")}}`;
+  }
+
+  return JSON.stringify(value);
 }
 
 function toScoreMap(analysis: PlayStyleAnalysis): PlayStyleScores {
