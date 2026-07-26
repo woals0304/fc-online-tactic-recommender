@@ -1,0 +1,88 @@
+[
+  {
+    "matchId": "fixture-match-001",
+    "matchDate": "2026-04-30T11:20:00",
+    "matchType": 50,
+    "matchInfo": [
+      {
+        "ouid": "fixture-ouid-001",
+        "nickname": "테스트구단주",
+        "matchDetail": {
+          "matchResult": "승",
+          "possession": 55,
+          "dribble": 21
+        },
+        "shoot": {
+          "shootTotal": 10,
+          "effectiveShootTotal": 6,
+          "goalTotalDisplay": 3
+        },
+        "pass": {
+          "passTry": 100,
+          "passSuccess": 90
+        },
+        "defence": {
+          "tackleTry": 5,
+          "tackleSuccess": 4
+        }
+      },
+      {
+        "ouid": "fixture-ouid-002",
+        "nickname": "상대구단주",
+        "matchDetail": {
+          "matchResult": "패",
+          "possession": 45,
+          "dribble": 14
+        },
+        "shoot": {
+          "shootTotal": 8,
+          "effectiveShootTotal": 4,
+          "goalTotalDisplay": 1
+        }
+      }
+    ]
+  },
+  {
+    "matchId": "fixture-match-002",
+    "matchDate": "2026-04-29T22:10:00",
+    "matchType": 50,
+    "matchInfo": [
+      {
+        "ouid": "fixture-ouid-001",
+        "nickname": "테스트구단주",
+        "matchDetail": {
+          "matchResult": "무",
+          "possession": "49",
+          "dribble": "18"
+        },
+        "shoot": {
+          "shootTotal": "7",
+          "effectiveShootTotal": "5",
+          "goalTotal": "2"
+        },
+        "pass": {
+          "passTry": "80",
+          "passSuccess": "64"
+        },
+        "defence": {
+          "tackleTry": "6",
+          "tackleSuccess": "3"
+        }
+      },
+      {
+        "ouid": "fixture-ouid-003",
+        "nickname": "무승부상대",
+        "matchDetail": {
+          "matchResult": "무",
+          "possession": "51",
+          "dribble": "20"
+        },
+        "shoot": {
+          "shootTotal": "9",
+          "effectiveShootTotal": "5",
+          "goalTotal": "2"
+        }
+      }
+    ]
+  }
+]

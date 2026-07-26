@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="FC ONLINE 전술 추천기">
+  <rect width="64" height="64" rx="14" fill="#095c57" />
+  <path d="M8 32h48M32 8v48" fill="none" stroke="#dff5f2" stroke-width="2" opacity=".7" />
+  <circle cx="32" cy="32" r="11" fill="none" stroke="#dff5f2" stroke-width="2" opacity=".7" />
+  <circle cx="32" cy="32" r="4" fill="#fff" />
+  <path d="M13 20v-4h10M51 44v4H41" fill="none" stroke="#fff" stroke-linecap="round" stroke-width="4" />
+</svg>
