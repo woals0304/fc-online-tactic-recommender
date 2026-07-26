@@ -342,33 +342,33 @@ type PitchPlacement<T> = {
 };
 
 const PITCH_POSITIONS: Readonly<Record<number, PitchPosition>> = {
-  0: { code: 0, label: "GK", left: 50, top: 91 },
-  1: { code: 1, label: "SW", left: 50, top: 82 },
-  2: { code: 2, label: "RWB", left: 88, top: 67 },
-  3: { code: 3, label: "RB", left: 86, top: 76 },
-  4: { code: 4, label: "RCB", left: 68, top: 78 },
-  5: { code: 5, label: "CB", left: 50, top: 79 },
-  6: { code: 6, label: "LCB", left: 32, top: 78 },
-  7: { code: 7, label: "LB", left: 14, top: 76 },
-  8: { code: 8, label: "LWB", left: 12, top: 67 },
+  0: { code: 0, label: "GK", left: 50, top: 93 },
+  1: { code: 1, label: "SW", left: 50, top: 84 },
+  2: { code: 2, label: "RWB", left: 88, top: 66 },
+  3: { code: 3, label: "RB", left: 86, top: 75 },
+  4: { code: 4, label: "RCB", left: 68, top: 76 },
+  5: { code: 5, label: "CB", left: 50, top: 76 },
+  6: { code: 6, label: "LCB", left: 32, top: 76 },
+  7: { code: 7, label: "LB", left: 14, top: 75 },
+  8: { code: 8, label: "LWB", left: 12, top: 66 },
   9: { code: 9, label: "RDM", left: 68, top: 60 },
   10: { code: 10, label: "CDM", left: 50, top: 61 },
   11: { code: 11, label: "LDM", left: 32, top: 60 },
-  12: { code: 12, label: "RM", left: 86, top: 48 },
-  13: { code: 13, label: "RCM", left: 70, top: 48 },
+  12: { code: 12, label: "RM", left: 86, top: 47 },
+  13: { code: 13, label: "RCM", left: 70, top: 47 },
   14: { code: 14, label: "CM", left: 50, top: 47 },
-  15: { code: 15, label: "LCM", left: 30, top: 48 },
-  16: { code: 16, label: "LM", left: 14, top: 48 },
-  17: { code: 17, label: "RAM", left: 70, top: 35 },
+  15: { code: 15, label: "LCM", left: 30, top: 47 },
+  16: { code: 16, label: "LM", left: 14, top: 47 },
+  17: { code: 17, label: "RAM", left: 70, top: 34 },
   18: { code: 18, label: "CAM", left: 50, top: 34 },
-  19: { code: 19, label: "LAM", left: 30, top: 35 },
-  20: { code: 20, label: "RF", left: 68, top: 22 },
-  21: { code: 21, label: "CF", left: 50, top: 22 },
-  22: { code: 22, label: "LF", left: 32, top: 22 },
+  19: { code: 19, label: "LAM", left: 30, top: 34 },
+  20: { code: 20, label: "RF", left: 68, top: 24 },
+  21: { code: 21, label: "CF", left: 50, top: 24 },
+  22: { code: 22, label: "LF", left: 32, top: 24 },
   23: { code: 23, label: "RW", left: 85, top: 20 },
-  24: { code: 24, label: "RS", left: 65, top: 12 },
-  25: { code: 25, label: "ST", left: 50, top: 10 },
-  26: { code: 26, label: "LS", left: 35, top: 12 },
+  24: { code: 24, label: "RS", left: 67, top: 11 },
+  25: { code: 25, label: "ST", left: 50, top: 9 },
+  26: { code: 26, label: "LS", left: 33, top: 11 },
   27: { code: 27, label: "LW", left: 15, top: 20 },
   28: { code: 28, label: "SUB", left: 50, top: 105 },
 };
@@ -1138,14 +1138,16 @@ function createPitchPlacements<T>(
     const position = readPosition(item);
     const index = positionIndexes.get(position.code) ?? 0;
     const count = positionCounts.get(position.code) ?? 1;
-    const horizontalOffset = (index - (count - 1) / 2) * 9;
+    const duplicateOffset = index - (count - 1) / 2;
+    const horizontalOffset = duplicateOffset * 16;
+    const verticalOffset = duplicateOffset * 14;
 
     positionIndexes.set(position.code, index + 1);
 
     return {
       item,
-      left: clampPitchCoordinate(position.left + horizontalOffset),
-      top: clampPitchCoordinate(position.top),
+      left: clampPitchHorizontalCoordinate(position.left + horizontalOffset),
+      top: clampPitchVerticalCoordinate(position.top + verticalOffset),
     };
   });
 }
@@ -1188,8 +1190,12 @@ function isGuideForRecommendation(
   );
 }
 
-function clampPitchCoordinate(value: number) {
-  return Math.min(Math.max(value, 12), 88);
+function clampPitchHorizontalCoordinate(value: number) {
+  return Math.min(Math.max(value, 8), 92);
+}
+
+function clampPitchVerticalCoordinate(value: number) {
+  return Math.min(Math.max(value, 8), 92);
 }
 
 function RecentSquadCardView({ card }: { card: RecentSquadCard }) {
