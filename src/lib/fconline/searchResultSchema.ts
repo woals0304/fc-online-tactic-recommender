@@ -3,6 +3,8 @@ import type {
   NormalizedMatch,
   PlayStyleAnalysis,
   PlayStyleLabel,
+  RecentSquadCard,
+  RecentSquadProfile,
   SearchResult,
   SearchResultWithAnalysis,
 } from "./types";
@@ -42,7 +44,9 @@ export function isSearchResultWithAnalysis(
     !isUser(value.user) ||
     !isNormalizedMatches(value.matches) ||
     !isPlayStyleAnalysis(value.analysis) ||
-    !isTacticRecommendationSet(value.recommendation)
+    !isTacticRecommendationSet(value.recommendation) ||
+    (value.squadProfile !== undefined &&
+      !isRecentSquadProfile(value.squadProfile, value.matches))
   ) {
     return false;
   }
@@ -102,7 +106,8 @@ function isNormalizedMatch(value: unknown): value is NormalizedMatch {
     !isEnumValue(value.result, MATCH_RESULTS) ||
     typeof value.opponentNickname !== "string" ||
     !isRecord(value.score) ||
-    !isRecord(value.stats)
+    !isRecord(value.stats) ||
+    (value.players !== undefined && !isNormalizedMatchPlayers(value.players))
   ) {
     return false;
   }
@@ -116,6 +121,125 @@ function isNormalizedMatch(value: unknown): value is NormalizedMatch {
     isFiniteNumberOrNull(value.stats.passSuccessRate) &&
     isFiniteNumberOrNull(value.stats.tackleSuccessRate) &&
     isFiniteNumberOrNull(value.stats.dribbles)
+  );
+}
+
+function isNormalizedMatchPlayers(value: unknown) {
+  return Array.isArray(value) && value.every(isNormalizedMatchPlayer);
+}
+
+function isNormalizedMatchPlayer(value: unknown) {
+  if (
+    !isRecord(value) ||
+    !isPositiveSafeInteger(value.spId) ||
+    !(value.spGrade === null || isIntegerInRange(value.spGrade, 1, 13)) ||
+    !(value.spPosition === null || isNonNegativeInteger(value.spPosition)) ||
+    !isRecord(value.performance)
+  ) {
+    return false;
+  }
+
+  const performance = value.performance;
+
+  return [
+    "rating",
+    "goals",
+    "assists",
+    "shots",
+    "effectiveShots",
+    "passesAttempted",
+    "passesCompleted",
+    "tacklesAttempted",
+    "tacklesCompleted",
+    "interceptions",
+    "blocks",
+  ].every((key) => isNonNegativeFiniteNumberOrNull(performance[key]));
+}
+
+function isRecentSquadProfile(
+  value: unknown,
+  matches: NormalizedMatch[],
+): value is RecentSquadProfile {
+  if (
+    !isRecord(value) ||
+    value.source !== "recent-official-matches" ||
+    !isNonNegativeInteger(value.requestedMatchCount) ||
+    !isNonNegativeInteger(value.analyzedMatchCount) ||
+    value.analyzedMatchCount !== matches.length ||
+    value.requestedMatchCount < value.analyzedMatchCount ||
+    !isNonNegativeInteger(value.matchesWithPlayerData) ||
+    value.matchesWithPlayerData > value.analyzedMatchCount ||
+    !isEnumValue(value.metadataStatus, ["available", "unavailable"] as const) ||
+    !isStringOrNull(value.metadataFetchedAt) ||
+    !Array.isArray(value.cards) ||
+    !isRecord(value.recommendationImpact) ||
+    value.recommendationImpact.applied !== false ||
+    typeof value.recommendationImpact.reason !== "string"
+  ) {
+    return false;
+  }
+
+  const matchesWithPlayerData = value.matchesWithPlayerData;
+
+  if (!value.cards.every((card) => isRecentSquadCard(card, matchesWithPlayerData))) {
+    return false;
+  }
+
+  const actualMatchesWithPlayerData = matches.filter((match) => {
+    const players = (match as unknown as { players?: unknown }).players;
+    return Array.isArray(players) && players.length > 0;
+  }).length;
+
+  if (matchesWithPlayerData !== actualMatchesWithPlayerData) {
+    return false;
+  }
+
+  const cardKeys = value.cards.map((card) => `${card.spId}:${card.spGrade ?? "unknown"}`);
+  return new Set(cardKeys).size === cardKeys.length;
+}
+
+function isRecentSquadCard(
+  value: unknown,
+  matchesWithPlayerData: number,
+): value is RecentSquadCard {
+  if (
+    !isRecord(value) ||
+    !isPositiveSafeInteger(value.spId) ||
+    !(value.spGrade === null || isIntegerInRange(value.spGrade, 1, 13)) ||
+    !isStringOrNull(value.name) ||
+    !isStringOrNull(value.seasonName) ||
+    !isStringOrNull(value.seasonImageUrl) ||
+    !(value.positionCode === null || isNonNegativeInteger(value.positionCode)) ||
+    !isStringOrNull(value.positionName) ||
+    !isPositiveSafeInteger(value.listedMatches) ||
+    value.listedMatches > matchesWithPlayerData ||
+    !isNonNegativeInteger(value.starterMatches) ||
+    !isNonNegativeInteger(value.substituteListings) ||
+    !isNonNegativeInteger(value.unclassifiedListings) ||
+    value.starterMatches + value.substituteListings + value.unclassifiedListings !==
+      value.listedMatches ||
+    !isFiniteNumberOrNull(value.averageRating) ||
+    !isNonNegativeFiniteNumber(value.goals) ||
+    !isNonNegativeFiniteNumber(value.assists) ||
+    !isStringOrNull(value.lastUsedAt) ||
+    typeof value.playerImageUrl !== "string" ||
+    typeof value.playerFallbackImageUrl !== "string" ||
+    !isStringOrNull(value.officialDataCenterUrl)
+  ) {
+    return false;
+  }
+
+  const spId = value.spId;
+  const spGrade = value.spGrade;
+  const officialDataCenterUrl = value.officialDataCenterUrl;
+
+  return (
+    (value.seasonImageUrl === null || isAllowedNexonAssetUrl(value.seasonImageUrl)) &&
+    isExpectedPlayerImageUrl(value.playerImageUrl, spId, "playersAction") &&
+    isExpectedPlayerImageUrl(value.playerFallbackImageUrl, spId, "players") &&
+    (officialDataCenterUrl === null ||
+      (spGrade !== null &&
+        isExpectedDataCenterUrl(officialDataCenterUrl, spId, spGrade)))
   );
 }
 
@@ -172,6 +296,27 @@ function isNonNegativeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
 
+function isPositiveSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+function isIntegerInRange(value: unknown, minimum: number, maximum: number): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value >= minimum &&
+    value <= maximum
+  );
+}
+
+function isNonNegativeFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function isNonNegativeFiniteNumberOrNull(value: unknown): value is number | null {
+  return value === null || isNonNegativeFiniteNumber(value);
+}
+
 function isNumberInRange(value: unknown, minimum: number, maximum: number) {
   return (
     typeof value === "number" &&
@@ -179,4 +324,48 @@ function isNumberInRange(value: unknown, minimum: number, maximum: number) {
     value >= minimum &&
     value <= maximum
   );
+}
+
+function isAllowedNexonAssetUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === "https:" &&
+      ["fco.dn.nexoncdn.co.kr", "ssl.nexon.com"].includes(url.hostname)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isExpectedPlayerImageUrl(
+  value: string,
+  spId: number,
+  directory: "players" | "playersAction",
+) {
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === "https:" &&
+      url.hostname === "fco.dn.nexoncdn.co.kr" &&
+      url.pathname === `/live/externalAssets/common/${directory}/p${spId}.png`
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isExpectedDataCenterUrl(value: string, spId: number, spGrade: number) {
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === "https:" &&
+      url.hostname === "fconline.nexon.com" &&
+      url.pathname.toLowerCase() === "/datacenter/playerinfo" &&
+      url.searchParams.get("spid") === String(spId) &&
+      url.searchParams.get("n1Strong") === String(spGrade)
+    );
+  } catch {
+    return false;
+  }
 }

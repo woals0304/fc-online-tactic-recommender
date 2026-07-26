@@ -4,11 +4,16 @@ import { NextResponse } from "next/server";
 
 import { analyzePlayStyle } from "../../../lib/analysis/playStyleAnalyzer";
 import { FcOnlineApiError, FcOnlineClient } from "../../../lib/fconline/client";
+import { loadOfficialMetadata } from "../../../lib/fconline/officialMetadata";
 import {
   DEFAULT_MATCH_TYPE,
   DEFAULT_MATCH_TYPE_LABEL,
   normalizeSearchResult,
 } from "../../../lib/fconline/normalize";
+import {
+  buildRecentSquadProfile,
+  type SquadMetadataLookup,
+} from "../../../lib/fconline/squadProfile";
 import type {
   ApiErrorType,
   FcOnlineMatchDetailResponse,
@@ -298,10 +303,19 @@ async function fetchSearchPayload(nickname: string, limit: number, apiKey: strin
   }
 
   const analysis = analyzePlayStyle(result.matches, matchIds.length);
+  const squadMetadata = result.matches.some((match) => match.players.length > 0)
+    ? toSquadMetadataLookup(await loadOfficialMetadata())
+    : createUnavailableSquadMetadataLookup();
+  const squadProfile = buildRecentSquadProfile(
+    result.matches,
+    matchIds.length,
+    squadMetadata,
+  );
 
   return {
     payload: {
       ...result,
+      squadProfile,
       analysis,
       recommendation: recommendTactic(analysis),
     },
@@ -580,6 +594,38 @@ function consumeRateLimit(key: string, maximum: number, now: number, cost = 1) {
 
 function estimateUpstreamCallCost(limit: number) {
   return 3 + limit;
+}
+
+function toSquadMetadataLookup(
+  metadata: Awaited<ReturnType<typeof loadOfficialMetadata>>,
+): SquadMetadataLookup {
+  if (metadata.status === "unavailable") {
+    return createUnavailableSquadMetadataLookup();
+  }
+
+  return {
+    status: "available",
+    fetchedAt: metadata.fetchedAt,
+    getPlayerName: metadata.getPlayerName,
+    getSeason: (spId) => {
+      const season = metadata.getSeason(spId);
+
+      return season
+        ? { name: season.className, imageUrl: season.seasonImg }
+        : null;
+    },
+    getPositionName: metadata.getPositionName,
+  };
+}
+
+function createUnavailableSquadMetadataLookup(): SquadMetadataLookup {
+  return {
+    status: "unavailable",
+    fetchedAt: null,
+    getPlayerName: () => null,
+    getSeason: () => null,
+    getPositionName: () => null,
+  };
 }
 
 function cleanupRateLimits(now: number) {

@@ -9,6 +9,10 @@ const clientMocks = vi.hoisted(() => ({
   getRecentMatchIds: vi.fn(),
 }));
 
+const metadataMocks = vi.hoisted(() => ({
+  loadOfficialMetadata: vi.fn(),
+}));
+
 vi.mock("../../../lib/fconline/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../../lib/fconline/client")>();
 
@@ -20,6 +24,16 @@ vi.mock("../../../lib/fconline/client", async (importOriginal) => {
       getOuidByNickname = clientMocks.getOuidByNickname;
       getRecentMatchIds = clientMocks.getRecentMatchIds;
     },
+  };
+});
+
+vi.mock("../../../lib/fconline/officialMetadata", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../../lib/fconline/officialMetadata")>();
+
+  return {
+    ...actual,
+    loadOfficialMetadata: metadataMocks.loadOfficialMetadata,
   };
 });
 
@@ -50,6 +64,7 @@ describe("GET /api/search", () => {
     clientMocks.getMatchDetail.mockImplementation(async (matchId: string) =>
       createMatchDetail(matchId),
     );
+    metadataMocks.loadOfficialMetadata.mockResolvedValue(createOfficialMetadata());
 
     ({ GET } = await import("./route"));
     ({ FcOnlineApiError } = await import("../../../lib/fconline/client"));
@@ -177,6 +192,72 @@ describe("GET /api/search", () => {
         expect(Number.isInteger(instruction.defenseParticipation.value)).toBe(true);
       }
     }
+  });
+
+  it("최근 경기의 실제 카드·강화·포지션을 공식 메타데이터와 결합한다", async () => {
+    const response = await GET(createRequest("테스트"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.matches[0].players[0]).toMatchObject({
+      spId: 225136606,
+      spGrade: 5,
+      spPosition: 25,
+      performance: { rating: 8.2, goals: 1, assists: 1 },
+    });
+    expect(body.squadProfile).toMatchObject({
+      source: "recent-official-matches",
+      analyzedMatchCount: 1,
+      matchesWithPlayerData: 1,
+      metadataStatus: "available",
+      recommendationImpact: { applied: false },
+      cards: [
+        expect.objectContaining({
+          spId: 225136606,
+          spGrade: 5,
+          name: "합성 선수",
+          seasonName: "합성 시즌",
+          positionName: "ST",
+          listedMatches: 1,
+        }),
+      ],
+    });
+  });
+
+  it("공식 메타데이터 장애가 검색과 기존 전술 추천을 실패시키지 않는다", async () => {
+    metadataMocks.loadOfficialMetadata.mockResolvedValue({
+      status: "unavailable",
+      fetchedAt: null,
+      reason: "timeout",
+      message: "합성 시간 초과",
+    });
+
+    const response = await GET(createRequest("테스트"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(isTacticRecommendationSet(body.recommendation)).toBe(true);
+    expect(body.squadProfile).toMatchObject({
+      metadataStatus: "unavailable",
+      cards: [expect.objectContaining({ spId: 225136606, name: null })],
+    });
+  });
+
+  it("손상된 선수 항목이 있어도 경기와 기존 추천을 유지한다", async () => {
+    const detail = createMatchDetail("match-1");
+    (detail.matchInfo[0] as { player: Array<Record<string, unknown>> }).player = [
+      { spGrade: 5, spId: "invalid", spPosition: 25, status: { spRating: 9 } },
+    ];
+    clientMocks.getMatchDetail.mockResolvedValue(detail);
+
+    const response = await GET(createRequest("테스트"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.matches[0].players).toEqual([]);
+    expect(body.squadProfile.cards).toEqual([]);
+    expect(isTacticRecommendationSet(body.recommendation)).toBe(true);
+    expect(metadataMocks.loadOfficialMetadata).not.toHaveBeenCalled();
   });
 
   it("사용자 기본 응답의 식별자가 조회 결과와 다르면 안전한 502로 거부한다", async () => {
@@ -512,6 +593,14 @@ function createMatchDetail(matchId: string) {
         nickname: "테스트구단주",
         ouid: "fixture-ouid",
         pass: { passSuccess: 80, passTry: 100 },
+        player: [
+          {
+            spGrade: 5,
+            spId: 225136606,
+            spPosition: 25,
+            status: { assist: 1, goal: 1, spRating: 8.2 },
+          },
+        ],
         shoot: { effectiveShootTotal: 4, goalTotalDisplay: 2, shootTotal: 7 },
       },
       {
@@ -521,6 +610,34 @@ function createMatchDetail(matchId: string) {
       },
     ],
     matchType: 50,
+  };
+}
+
+function createOfficialMetadata() {
+  return {
+    status: "available" as const,
+    fetchedAt: "2026-07-26T00:00:00.000Z",
+    expiresAt: "2026-07-27T00:00:00.000Z",
+    players: [{ id: 225136606, name: "합성 선수" }],
+    seasons: [
+      {
+        seasonId: 225,
+        className: "합성 시즌",
+        seasonImg: "https://ssl.nexon.com/season.png",
+      },
+    ],
+    positions: [{ spposition: 25, desc: "ST" }],
+    getPlayerName: (spId: number) => (spId === 225136606 ? "합성 선수" : null),
+    getSeason: (spId: number) =>
+      spId === 225136606
+        ? {
+            seasonId: 225,
+            className: "합성 시즌",
+            seasonImg: "https://ssl.nexon.com/season.png",
+          }
+        : null,
+    getPositionName: (code: number) => (code === 25 ? "ST" : null),
+    isSubstitutePosition: () => false,
   };
 }
 

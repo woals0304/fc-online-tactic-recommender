@@ -6,6 +6,7 @@ import basicUserFixture from "./__fixtures__/success/basic-user.json";
 import matchDetailsFixture from "./__fixtures__/success/match-details.json";
 import { normalizeSearchResult } from "./normalize";
 import { isSearchResultWithAnalysis } from "./searchResultSchema";
+import { buildRecentSquadProfile } from "./squadProfile";
 import type {
   FcOnlineBasicUserResponse,
   FcOnlineMatchDetailResponse,
@@ -18,6 +19,10 @@ const matchDetails = matchDetailsFixture as FcOnlineMatchDetailResponse[];
 describe("isSearchResultWithAnalysis", () => {
   it("정규화·분석·추천 파이프라인이 만든 정상 응답을 승인한다", () => {
     expect(isSearchResultWithAnalysis(createValidResult())).toBe(true);
+  });
+
+  it("최근 선수 카드 프로필을 포함한 신규 응답을 승인한다", () => {
+    expect(isSearchResultWithAnalysis(createValidResultWithSquad())).toBe(true);
   });
 
   it("구형 성공 응답의 선택적 unknown과 confidence 누락을 승인한다", () => {
@@ -80,6 +85,42 @@ describe("isSearchResultWithAnalysis", () => {
 
     expect(isSearchResultWithAnalysis(damaged)).toBe(false);
   });
+
+  it("선수 카드 링크가 공식 출처가 아니거나 집계 경기 수가 다르면 거부한다", () => {
+    const unsafeLink = createValidResultWithSquad() as unknown as {
+      squadProfile: { cards: Array<{ officialDataCenterUrl: string }> };
+    };
+    unsafeLink.squadProfile.cards[0].officialDataCenterUrl =
+      "https://example.com/player?spid=225136606";
+    expect(isSearchResultWithAnalysis(unsafeLink)).toBe(false);
+
+    const wrongGrade = createValidResultWithSquad() as unknown as {
+      squadProfile: { cards: Array<{ officialDataCenterUrl: string }> };
+    };
+    wrongGrade.squadProfile.cards[0].officialDataCenterUrl =
+      "https://fconline.nexon.com/DataCenter/PlayerInfo?spid=225136606&n1Strong=6";
+    expect(isSearchResultWithAnalysis(wrongGrade)).toBe(false);
+
+    const mismatchedCount = createValidResultWithSquad() as unknown as {
+      squadProfile: { analyzedMatchCount: number };
+    };
+    mismatchedCount.squadProfile.analyzedMatchCount += 1;
+    expect(isSearchResultWithAnalysis(mismatchedCount)).toBe(false);
+  });
+
+  it("players와 squadProfile이 없는 구형 성공 응답을 계속 승인한다", () => {
+    const legacy = structuredClone(createValidResult()) as unknown as {
+      matches: Array<{ players?: unknown }>;
+      squadProfile?: unknown;
+    };
+
+    for (const match of legacy.matches) {
+      delete match.players;
+    }
+    delete legacy.squadProfile;
+
+    expect(isSearchResultWithAnalysis(legacy)).toBe(true);
+  });
 });
 
 function createValidResult(): SearchResultWithAnalysis {
@@ -91,4 +132,40 @@ function createValidResult(): SearchResultWithAnalysis {
     analysis,
     recommendation: recommendTactic(analysis),
   };
+}
+
+function createValidResultWithSquad(): SearchResultWithAnalysis {
+  const result = createValidResult();
+  result.matches[0].players = [
+    {
+      spId: 225136606,
+      spGrade: 5,
+      spPosition: 25,
+      performance: {
+        rating: 8.2,
+        goals: 1,
+        assists: 0,
+        shots: 3,
+        effectiveShots: 2,
+        passesAttempted: 10,
+        passesCompleted: 8,
+        tacklesAttempted: 0,
+        tacklesCompleted: 0,
+        interceptions: 0,
+        blocks: 0,
+      },
+    },
+  ];
+  result.squadProfile = buildRecentSquadProfile(result.matches, result.matches.length, {
+    status: "available",
+    fetchedAt: "2026-07-26T00:00:00.000Z",
+    getPlayerName: () => "합성 선수",
+    getSeason: () => ({
+      name: "합성 시즌",
+      imageUrl: "https://ssl.nexon.com/season.png",
+    }),
+    getPositionName: () => "ST",
+  });
+
+  return result;
 }

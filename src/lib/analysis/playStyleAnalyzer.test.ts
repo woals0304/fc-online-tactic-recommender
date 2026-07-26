@@ -252,5 +252,6 @@ function createNormalizedMatch({
       dribbles: null,
       ...stats,
     },
+    players: [],
   };
 }

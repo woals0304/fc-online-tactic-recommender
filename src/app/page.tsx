@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import type { FormEvent } from "react";
+import type { FormEvent, SyntheticEvent } from "react";
 
 import type {
   ApiErrorResponse,
+  RecentSquadCard,
+  RecentSquadProfile,
   TacticRecommendation,
   TacticRecommendationSet,
 } from "@/lib/fconline/types";
@@ -258,6 +260,7 @@ function ResultView({
       </div>
 
       <TacticRecommendationView recommendation={result.recommendation} />
+      {result.squadProfile ? <RecentSquadView profile={result.squadProfile} /> : null}
       <details className="result-details">
         <summary>플레이 성향과 추천 근거 보기</summary>
         <StyleAnalysisView analysis={result.analysis} />
@@ -298,6 +301,130 @@ function ResultView({
       )}
     </section>
   );
+}
+
+function RecentSquadView({ profile }: { profile: RecentSquadProfile }) {
+  if (profile.cards.length === 0) {
+    return (
+      <aside className="squad-unavailable" role="note">
+        <strong>최근 사용 선수단 정보 없음</strong>
+        <span>{profile.recommendationImpact.reason}</span>
+      </aside>
+    );
+  }
+
+  return (
+    <details className="result-details squad-details">
+      <summary>
+        최근 사용 선수단 보기 ({profile.cards.length}종 · 선수 정보 {profile.matchesWithPlayerData}/
+        {profile.requestedMatchCount}경기)
+      </summary>
+      <div className="squad-content">
+        <div className="squad-notes" role="note">
+          <p>
+            현재 보유 선수단이 아니라 최근 공식 경기 명단입니다. SUB는 후보 등록이며 실제 교체
+            출전을 확정하지 않습니다.
+          </p>
+          <p>{profile.recommendationImpact.reason}</p>
+        </div>
+        {profile.metadataStatus === "unavailable" ? (
+          <p className="metadata-warning">
+            공식 선수 메타데이터를 불러오지 못해 이름·시즌·포지션 일부를 ID로 표시합니다.
+          </p>
+        ) : null}
+        <div className="squad-grid">
+          {profile.cards.map((card) => (
+            <RecentSquadCardView
+              key={`${card.spId}:${card.spGrade ?? "unknown"}`}
+              card={card}
+            />
+          ))}
+        </div>
+        <p className="ability-boundary">
+          정확한 강화 능력치는 각 카드의 공식 데이터센터 링크에서 확인하세요. 링크의 수치는
+          카드·강화 기준이며 팀컬러·적응도·훈련코치 등 실제 인게임 보정은 별도입니다.
+        </p>
+      </div>
+    </details>
+  );
+}
+
+function RecentSquadCardView({ card }: { card: RecentSquadCard }) {
+  const displayName = card.name ?? `선수 ID ${card.spId}`;
+  const position = card.positionName ??
+    (card.positionCode === null ? "포지션 정보 없음" : `포지션 ${card.positionCode}`);
+
+  return (
+    <article className="squad-card">
+      <div className="squad-card-identity">
+        <div className="squad-player-image" aria-hidden="true">
+          <span>FC</span>
+          <img
+            src={card.playerImageUrl}
+            data-fallback-src={card.playerFallbackImageUrl}
+            alt=""
+            width="72"
+            height="72"
+            loading="lazy"
+            onError={handlePlayerImageError}
+          />
+        </div>
+        <div>
+          <span className="squad-season">{card.seasonName ?? "시즌 정보 없음"}</span>
+          <h3>{displayName}</h3>
+          <p>
+            <strong>+{card.spGrade ?? "?"}</strong> · {position}
+          </p>
+        </div>
+      </div>
+      <dl className="squad-card-stats">
+        <div>
+          <dt>최근 명단</dt>
+          <dd>{card.listedMatches}경기</dd>
+        </div>
+        <div>
+          <dt>선발 위치</dt>
+          <dd>{card.positionName === null ? "-" : `${card.starterMatches}경기`}</dd>
+        </div>
+        <div>
+          <dt>평균 평점</dt>
+          <dd>{card.averageRating ?? "-"}</dd>
+        </div>
+        <div>
+          <dt>골/도움</dt>
+          <dd>
+            {card.goals}/{card.assists}
+          </dd>
+        </div>
+      </dl>
+      {card.officialDataCenterUrl ? (
+        <a
+          className="ability-link"
+          href={card.officialDataCenterUrl}
+          target="_blank"
+          rel="noreferrer"
+        >
+          공식 능력치 보기
+          <span className="visually-hidden"> — 새 창</span>
+        </a>
+      ) : (
+        <span className="ability-link is-unavailable">강화 단계 확인 불가</span>
+      )}
+    </article>
+  );
+}
+
+function handlePlayerImageError(event: SyntheticEvent<HTMLImageElement>) {
+  const image = event.currentTarget;
+  const fallback = image.dataset.fallbackSrc;
+
+  if (fallback) {
+    delete image.dataset.fallbackSrc;
+    image.src = fallback;
+    return;
+  }
+
+  image.hidden = true;
 }
 
 function TacticRecommendationView({
