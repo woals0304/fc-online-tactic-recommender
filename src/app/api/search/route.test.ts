@@ -1,5 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { isTacticRecommendationSet } from "../../../lib/tactics/tacticSchema";
+
 const clientMocks = vi.hoisted(() => ({
   getBasicUser: vi.fn(),
   getMatchDetail: vi.fn(),
@@ -130,6 +132,51 @@ describe("GET /api/search", () => {
     expect(response.status).toBe(200);
     expect(clientMocks.getMatchDetail).toHaveBeenCalledOnce();
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("추천 전술의 현행 스키마를 JSON 응답에 손실 없이 직렬화한다", async () => {
+    const response = await GET(createRequest("테스트"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(isTacticRecommendationSet(body.recommendation)).toBe(true);
+
+    const { primary, alternative } = body.recommendation;
+
+    expect(primary.metadata).toMatchObject({
+      schemaVersion: "fc-online-12nf-2026-03-26",
+      gamePatchVersion: "12th-next-field-2026-03-26",
+      templateVersion: "1.0.0",
+      configHash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+      validation: {
+        overall: "partial",
+        teamTactics: "confirmed",
+        formation: "unconfirmed",
+        personalTactics: "unconfirmed",
+      },
+    });
+    expect(primary.teamTactics.schemaVersion).toBe(primary.metadata.schemaVersion);
+    expect(primary.teamTactics.offensiveTactics.chanceCreation).toEqual(expect.any(String));
+    expect(alternative.teamTactics.offensiveTactics.chanceCreation).toEqual(expect.any(String));
+    expect(primary.metadata.templateId).not.toBe(alternative.metadata.templateId);
+    expect(primary.formation).not.toBe(alternative.formation);
+
+    for (const recommendation of [primary, alternative]) {
+      for (const instruction of recommendation.playerInstructions) {
+        expect(instruction.positions).toEqual(expect.arrayContaining([expect.any(String)]));
+        expect(instruction).not.toHaveProperty("position");
+        expect(instruction.uiSettings.length).toBeGreaterThan(0);
+        expect(
+          instruction.uiSettings.every(
+            (setting: { confirmed: boolean }) => setting.confirmed === false,
+          ),
+        ).toBe(true);
+        expect(instruction.attackParticipation).toMatchObject({ confirmed: false });
+        expect(instruction.defenseParticipation).toMatchObject({ confirmed: false });
+        expect(Number.isInteger(instruction.attackParticipation.value)).toBe(true);
+        expect(Number.isInteger(instruction.defenseParticipation.value)).toBe(true);
+      }
+    }
   });
 
   it("사용자 기본 응답의 식별자가 조회 결과와 다르면 안전한 502로 거부한다", async () => {

@@ -5,16 +5,19 @@ import type { FormEvent } from "react";
 
 import type {
   ApiErrorResponse,
-  PlayStyleAnalysis,
-  SearchResultWithAnalysis,
   TacticRecommendation,
   TacticRecommendationSet,
 } from "@/lib/fconline/types";
+import {
+  isSearchResultWithAnalysis,
+  type CompatiblePlayStyleAnalysis,
+  type SearchResultWithAnalysisPayload,
+} from "@/lib/fconline/searchResultSchema";
 
 type ViewState =
   | { status: "idle" }
   | { status: "loading"; submittedNickname: string }
-  | { status: "success"; submittedNickname: string; result: SearchResultWithAnalysis }
+  | { status: "success"; submittedNickname: string; result: SearchResultWithAnalysisPayload }
   | {
       status: "error";
       submittedNickname: string;
@@ -26,14 +29,6 @@ type AnalysisConfidence = {
   level: string;
   coverage: number;
   message: string;
-};
-
-type AnalysisWithOptionalConfidence = PlayStyleAnalysis & {
-  confidence?: AnalysisConfidence;
-};
-
-type SummaryWithOptionalUnknown = SearchResultWithAnalysis["summary"] & {
-  unknown?: number;
 };
 
 const initialState: ViewState = { status: "idle" };
@@ -94,7 +89,7 @@ export default function Home() {
         return;
       }
 
-      if (!isSearchResult(data)) {
+      if (!isSearchResultWithAnalysis(data)) {
         setState({
           status: "error",
           submittedNickname: trimmedNickname,
@@ -225,20 +220,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-function isSearchResult(value: unknown): value is SearchResultWithAnalysis {
-  if (!isRecord(value)) {
-    return false;
-  }
-
-  return (
-    isRecord(value.user) &&
-    isRecord(value.summary) &&
-    Array.isArray(value.matches) &&
-    isRecord(value.analysis) &&
-    isRecord(value.recommendation)
-  );
-}
-
 function isAbortError(error: unknown) {
   return (
     (typeof DOMException !== "undefined" &&
@@ -252,10 +233,10 @@ function ResultView({
   result,
   submittedNickname,
 }: {
-  result: SearchResultWithAnalysis;
+  result: SearchResultWithAnalysisPayload;
   submittedNickname: string;
 }) {
-  const unknownMatches = (result.summary as SummaryWithOptionalUnknown).unknown;
+  const unknownMatches = result.summary.unknown;
 
   return (
     <section className="result" aria-label={`‘${submittedNickname}’ 조회 결과`}>
@@ -336,6 +317,8 @@ function TacticCard({
   label: string;
   recommendation: TacticRecommendation;
 }) {
+  const { metadata } = recommendation;
+
   return (
     <article className="tactic-card">
       <div className="tactic-card-head">
@@ -346,50 +329,171 @@ function TacticCard({
         </div>
         <strong>{recommendation.formation}</strong>
       </div>
+      <dl className="tactic-metadata" aria-label={`${label} 버전 및 검증 정보`}>
+        <MetadataItem label="스키마" value={metadata.schemaVersion} />
+        <MetadataItem label="게임 패치" value={metadata.gamePatchVersion} />
+        <MetadataItem
+          label="템플릿"
+          value={`${metadata.templateId} · v${metadata.templateVersion}`}
+        />
+        <div className="metadata-item validation-metadata">
+          <dt>검증 상태</dt>
+          <dd>
+            <ValidationBadge status={metadata.validation.overall} />
+          </dd>
+        </div>
+      </dl>
+      <div className="validation-summary" role="note" aria-label="전술 검증 범위">
+        <div>
+          <span>팀 전술</span>
+          <ValidationBadge status={metadata.validation.teamTactics} />
+        </div>
+        <div>
+          <span>포메이션</span>
+          <ValidationBadge status={metadata.validation.formation} />
+        </div>
+        <div>
+          <span>개인 전술</span>
+          <ValidationBadge status={metadata.validation.personalTactics} />
+        </div>
+        {metadata.validation.overall === "partial" ? (
+          <p>
+            팀 전술만 현행 공식 입력 범위에 맞췄습니다. 미확인 포메이션과 개인 전술은
+            클라이언트에서 메뉴값을 확인하기 전에는 입력하지 마세요.
+          </p>
+        ) : null}
+      </div>
       <div className="tactic-block">
         <h4>팀 전술</h4>
         <div className="setting-grid">
           <Setting label="팀 성향" value={recommendation.teamTactics.teamMentality} />
           <Setting label="수비 스타일" value={recommendation.teamTactics.defensiveTactics.defensiveStyle} />
-          <Setting label="수비 폭" value={`${recommendation.teamTactics.defensiveTactics.width}`} />
-          <Setting label="수비 깊이" value={`${recommendation.teamTactics.defensiveTactics.depth}`} />
-          <Setting label="빌드업 플레이" value={recommendation.teamTactics.offensiveTactics.buildUpPlay} />
-          <Setting label="공격 폭" value={`${recommendation.teamTactics.offensiveTactics.width}`} />
-          <Setting label="박스 안쪽 선수" value={`${recommendation.teamTactics.offensiveTactics.playersInBox}`} />
-          <Setting label="코너킥" value={`${recommendation.teamTactics.offensiveTactics.corners}`} />
-          <Setting label="프리킥" value={`${recommendation.teamTactics.offensiveTactics.freeKicks}`} />
+          <Setting
+            label="수비 폭"
+            value={`${recommendation.teamTactics.defensiveTactics.width} / 10`}
+          />
+          <Setting
+            label="수비 깊이"
+            value={`${recommendation.teamTactics.defensiveTactics.depth} / 10`}
+          />
+          <Setting
+            label="빌드업 · 수비 진영"
+            value={recommendation.teamTactics.offensiveTactics.buildUpPlay}
+          />
+          <Setting
+            label="기회 만들기 · 공격 진영"
+            value={recommendation.teamTactics.offensiveTactics.chanceCreation}
+          />
+          <Setting
+            label="공격 폭"
+            value={`${recommendation.teamTactics.offensiveTactics.width} / 10`}
+          />
+          <Setting
+            label="박스 안쪽 선수"
+            value={`${recommendation.teamTactics.offensiveTactics.playersInBox} / 10`}
+          />
+          <Setting
+            label="코너킥"
+            value={`${recommendation.teamTactics.offensiveTactics.corners} / 5`}
+          />
+          <Setting
+            label="프리킥"
+            value={`${recommendation.teamTactics.offensiveTactics.freeKicks} / 5`}
+          />
         </div>
       </div>
       <div className="tactic-block">
-        <h4>개인 전술</h4>
+        <div className="tactic-block-heading">
+          <h4>개인 전술</h4>
+          <span>추천 역할 설명과 UI 메뉴값 후보를 구분해 확인하세요</span>
+        </div>
+        <p className="unconfirmed-instruction-note" role="note">
+          아래 개인 전술과 참여도는 기존 추천값 후보이며 모두 미확인 상태입니다. 클라이언트
+          확인 전에는 적용하지 마세요.
+        </p>
         <ul className="instruction-list">
-          {recommendation.playerInstructions.map((item) => (
+          {recommendation.playerInstructions.map((item, instructionIndex) => (
             <li
-              key={`${item.position}-${item.role}-${item.personalTactics
-                .map((setting) => `${setting.menu}:${setting.value}`)
+              key={`${item.positions.join("/")}-${item.roleDescription}-${item.uiSettings
+                .map((setting) => `${setting.group}:${setting.value}`)
                 .join(",")}`}
             >
-              <div>
-                <strong>{item.position}</strong>
-                <span>{item.role}</span>
+              <div className="instruction-heading">
+                <strong>{item.positions.join(" / ")}</strong>
+                <span>
+                  <small>추천 역할(설명)</small>
+                  {item.roleDescription}
+                </span>
               </div>
+              <p className="setting-kind">UI 메뉴 / 값 후보</p>
               <dl className="personal-tactics">
-                {item.personalTactics.map((setting) => (
-                  <div key={`${item.position}-${setting.menu}-${setting.value}`}>
-                    <dt>{setting.menu}</dt>
-                    <dd>{setting.value}</dd>
+                {item.uiSettings.map((setting, settingIndex) => (
+                  <div
+                    key={`${instructionIndex}-${settingIndex}-${setting.group}-${setting.value}`}
+                  >
+                    <dt>{setting.group}</dt>
+                    <dd>
+                      <span>{setting.value}</span>
+                      <ConfirmationBadge confirmed={setting.confirmed} />
+                    </dd>
                   </div>
                 ))}
               </dl>
-              <small>
-                공격 참여도 {item.attackParticipation} · 수비 참여도 {item.defenseParticipation}
-              </small>
+              <div className="participation-settings">
+                <ParticipationSetting label="공격 참여도" setting={item.attackParticipation} />
+                <ParticipationSetting label="수비 참여도" setting={item.defenseParticipation} />
+              </div>
             </li>
           ))}
         </ul>
       </div>
       <p className="tactic-explanation">{recommendation.explanation}</p>
     </article>
+  );
+}
+
+function MetadataItem({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="metadata-item">
+      <dt>{label}</dt>
+      <dd>
+        <code>{value}</code>
+      </dd>
+    </div>
+  );
+}
+
+function ValidationBadge({ status }: { status: "confirmed" | "unconfirmed" | "partial" }) {
+  const labels = {
+    confirmed: "확인됨",
+    unconfirmed: "미확인",
+    partial: "부분 검증",
+  } as const;
+
+  return <span className={`validation-badge is-${status}`}>{labels[status]}</span>;
+}
+
+function ConfirmationBadge({ confirmed }: { confirmed: boolean }) {
+  return (
+    <span className={`confirmation-badge ${confirmed ? "is-confirmed" : "is-unconfirmed"}`}>
+      {confirmed ? "확인됨" : "미확인"}
+    </span>
+  );
+}
+
+function ParticipationSetting({
+  label,
+  setting,
+}: {
+  label: string;
+  setting: { value: number; confirmed: boolean };
+}) {
+  return (
+    <div>
+      <span>{label}</span>
+      <strong>{setting.value}</strong>
+      <ConfirmationBadge confirmed={setting.confirmed} />
+    </div>
   );
 }
 
@@ -402,7 +506,7 @@ function Setting({ label, value }: { label: string; value: string }) {
   );
 }
 
-function StyleAnalysisView({ analysis }: { analysis: PlayStyleAnalysis }) {
+function StyleAnalysisView({ analysis }: { analysis: CompatiblePlayStyleAnalysis }) {
   const confidence = getAnalysisConfidence(analysis);
   const hasUnavailableScore = analysis.styles.some((style) => style.score === null);
   const matchCountLabel =
@@ -419,7 +523,7 @@ function StyleAnalysisView({ analysis }: { analysis: PlayStyleAnalysis }) {
       {confidence ? (
         <div className={`confidence-note ${getConfidenceClass(confidence.level)}`}>
           <div className="confidence-summary">
-            <span>분석 신뢰도</span>
+            <span>데이터 충분도</span>
             <strong>{formatConfidenceLevel(confidence.level)}</strong>
             <span>데이터 충족률 {formatCoverage(confidence.coverage)}</span>
           </div>
@@ -449,8 +553,8 @@ function StyleAnalysisView({ analysis }: { analysis: PlayStyleAnalysis }) {
   );
 }
 
-function getAnalysisConfidence(analysis: PlayStyleAnalysis): AnalysisConfidence | null {
-  const confidence = (analysis as AnalysisWithOptionalConfidence).confidence;
+function getAnalysisConfidence(analysis: CompatiblePlayStyleAnalysis): AnalysisConfidence | null {
+  const confidence = analysis.confidence;
 
   if (
     !confidence ||
